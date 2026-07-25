@@ -1,18 +1,545 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Calculable pente en temps reel</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0B1012">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pente — inclinomètre GPS</title>
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background:#f5f5f7; color:#1d1d1f; text-align:center; padding:60px 20px; }
-  h1 { color:#0071e3; }
-  p { color:#86868b; }
+  :root{
+    --ink:#0B1012;
+    --surface:#131C20;
+    --surface-2:#1B272C;
+    --line:#26343A;
+    --line-soft:#1E2A2F;
+    --text:#E8F1EE;
+    --muted:#7C8E8C;
+    --teal:#54B7A9;          /* historique, discret */
+    --teal-dim:rgba(84,183,169,.28);
+    --amber:#FFC24B;          /* pente courante, vif */
+    --amber-dim:rgba(255,194,75,.16);
+    --amber-line:rgba(255,194,75,.9);
+    --danger:#E4685D;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% -10%, #12211F 0%, var(--ink) 55%) fixed,
+      var(--ink);
+    color:var(--text);
+    font-family:-apple-system,"SF Pro Text",system-ui,Segoe UI,Roboto,sans-serif;
+    min-height:100dvh;
+    padding:
+      calc(env(safe-area-inset-top) + 18px)
+      calc(env(safe-area-inset-right) + 16px)
+      calc(env(safe-area-inset-bottom) + 24px)
+      calc(env(safe-area-inset-left) + 16px);
+    display:flex;flex-direction:column;gap:18px;
+    max-width:560px;margin:0 auto;
+  }
+  .mono{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+  .eyebrow{
+    font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;
+  }
+
+  /* En-tête */
+  header{display:flex;flex-direction:column;gap:14px}
+  .title-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  h1{margin:0;font-size:20px;letter-spacing:.04em;font-weight:700}
+  h1 .sub{display:block;font-size:11px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase;margin-top:4px;font-weight:600}
+
+  .toggle{
+    appearance:none;border:1px solid var(--line);border-radius:14px;
+    background:var(--surface);color:var(--text);
+    font-size:16px;font-weight:600;letter-spacing:.02em;
+    padding:16px 18px;width:100%;
+    display:flex;align-items:center;justify-content:center;gap:12px;
+    transition:background .18s,border-color .18s,transform .05s;
+  }
+  .toggle:active{transform:scale(.99)}
+  .toggle .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+  .toggle[data-on="true"]{background:var(--amber-dim);border-color:var(--amber)}
+  .toggle[data-on="true"] .dot{background:var(--amber);box-shadow:0 0 0 4px var(--amber-dim);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* Zone de mesure */
+  .zone{display:none;flex-direction:column;gap:16px}
+  .zone.open{display:flex;animation:reveal .28s ease}
+  @keyframes reveal{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:18px;
+    padding:18px;
+  }
+
+  /* Lecture principale de la pente */
+  .grade{position:relative;overflow:hidden}
+  .grade-head{display:flex;align-items:center;justify-content:space-between}
+  .badge{
+    font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;
+    padding:5px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);
+  }
+  .badge[data-state="live"]{color:var(--amber);border-color:var(--amber);background:var(--amber-dim)}
+  .badge[data-state="lock"]{color:var(--teal);border-color:var(--teal);background:var(--teal-dim)}
+  .grade-value{
+    display:flex;align-items:center;gap:6px;margin:6px 0 2px;
+    line-height:.9;
+  }
+  .arrow{font-size:44px;line-height:1;color:var(--amber);transition:transform .2s}
+  .num{font-size:88px;font-weight:800;letter-spacing:-.03em;color:var(--text)}
+  .unit{font-size:34px;font-weight:700;color:var(--muted);align-self:flex-start;margin-top:8px}
+  .grade-dir{font-size:14px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+
+  /* Progression vers 100 m */
+  .prog{margin-top:16px}
+  .prog-row{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:7px}
+  .prog-row .mono{color:var(--text)}
+  .track{height:7px;border-radius:99px;background:var(--surface-2);overflow:hidden;border:1px solid var(--line-soft)}
+  .fill{height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--amber));transition:width .3s}
+
+  /* Statistiques */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .stat{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:14px;padding:12px 12px 13px}
+  .stat .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .stat .v{font-size:19px;font-weight:700;margin-top:5px}
+  .stat .v small{font-size:12px;color:var(--muted);font-weight:600;margin-left:2px}
+
+  /* Graphiques */
+  .charts{display:flex;flex-direction:column;gap:12px}
+  .chart{padding:14px 14px 10px}
+  .chart-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .chart-head .eyebrow{margin:0}
+  .legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+  .swatch{width:14px;height:3px;border-radius:2px}
+  canvas{display:block;width:100%;border-radius:8px}
+  #histChart{height:132px}
+  #zoomChart{height:196px}
+
+  .status{font-size:12.5px;color:var(--muted);text-align:center;line-height:1.5}
+  .status.warn{color:var(--danger)}
+  footer{font-size:11.5px;color:var(--muted);line-height:1.6;text-align:center}
+  footer code{background:var(--surface);padding:1px 6px;border-radius:6px;border:1px solid var(--line-soft);color:var(--teal)}
 </style>
 </head>
 <body>
-<h1>Calculable pente en temps reel</h1>
-<p>Nouvelle application créée avec Le Déployeur.</p>
-<p>Déploie ton code depuis l'étape 3 pour remplacer cette page.</p>
+
+<header>
+  <div class="title-row">
+    <h1>PENTE<span class="sub">Inclinomètre GPS</span></h1>
+  </div>
+  <button id="toggle" class="toggle" data-on="false" aria-pressed="false">
+    <span class="dot"></span>
+    <span id="toggleLabel">Mesurer la pente</span>
+  </button>
+</header>
+
+<section id="zone" class="zone" aria-live="polite">
+
+  <!-- Lecture principale -->
+  <div class="card grade">
+    <div class="grade-head">
+      <span class="eyebrow">Pente courante</span>
+      <span id="badge" class="badge" data-state="idle">En attente</span>
+    </div>
+    <div class="grade-value">
+      <span id="arrow" class="arrow mono">→</span>
+      <span id="num" class="num mono">—</span>
+      <span class="unit mono">%</span>
+    </div>
+    <div id="dir" class="grade-dir">recherche du signal…</div>
+
+    <div class="prog">
+      <div class="prog-row">
+        <span>Progression vers le prochain point</span>
+        <span><span id="dist" class="mono">0</span> / 100 m</span>
+      </div>
+      <div class="track"><div id="fill" class="fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Statistiques -->
+  <div class="stats">
+    <div class="stat">
+      <div class="k">Altitude</div>
+      <div class="v mono"><span id="alt">—</span><small>m</small></div>
+    </div>
+    <div class="stat">
+      <div class="k">Dénivelé segment</div>
+      <div class="v mono"><span id="dz">—</span><small>m</small></div>
+    </div>
+    <div class="stat">
+      <div class="k">Précision GPS</div>
+      <div class="v mono"><span id="acc">—</span><small>m</small></div>
+    </div>
+  </div>
+
+  <!-- Graphiques -->
+  <div class="charts">
+    <div class="card chart">
+      <div class="chart-head">
+        <span class="eyebrow">Historique du relief</span>
+        <span class="legend"><span class="swatch" style="background:var(--teal)"></span>Altitude</span>
+      </div>
+      <canvas id="histChart"></canvas>
+    </div>
+
+    <div class="card chart">
+      <div class="chart-head">
+        <span class="eyebrow">Zoom pente — extrapolée</span>
+        <span class="legend"><span class="swatch" style="background:var(--amber)"></span>Segment en cours</span>
+      </div>
+      <canvas id="zoomChart"></canvas>
+    </div>
+  </div>
+
+  <div id="status" class="status">Autorisez la localisation pour démarrer.</div>
+</section>
+
+<footer>
+  Mesure hors ligne, aucune donnée transmise. À héberger en <code>https</code> (obligatoire pour le GPS sur iPhone).
+</footer>
+
+<script>
+"use strict";
+(function(){
+  const $ = s => document.getElementById(s);
+
+  // ---- Éléments ----
+  const toggle = $("toggle"), toggleLabel = $("toggleLabel"), zone = $("zone");
+  const badge = $("badge"), arrowEl = $("arrow"), numEl = $("num"), dirEl = $("dir");
+  const distEl = $("dist"), fillEl = $("fill");
+  const altEl = $("alt"), dzEl = $("dz"), accEl = $("acc"), statusEl = $("status");
+  const histCanvas = $("histChart"), zoomCanvas = $("zoomChart");
+
+  const TRIGGER = 100;   // distance (m) déclenchant un nouveau point de référence
+  const MIN_D   = 6;     // distance mini (m) avant de calculer une pente (anti-bruit GPS)
+  const EMA     = 0.35;  // lissage léger de l'altitude
+
+  let active = false, watchId = null, wakeLock = null;
+  let state = null;
+
+  function freshState(){
+    return {
+      anchor:null,      // point de référence {lat,lon,alt}
+      cum:0,            // distance cumulée à l'ancre (m)
+      emaAlt:null,      // altitude lissée
+      liveDist:0,       // distance depuis l'ancre (m)
+      liveSlope:null,   // pente provisoire (%) du segment en cours
+      locked:null,      // dernière pente verrouillée (%)
+      history:[],       // [{x:distanceCumulée, y:altitude}]
+    };
+  }
+
+  // ---- Géométrie ----
+  function haversine(a, b){
+    const R = 6371000, toRad = d => d*Math.PI/180;
+    const dLat = toRad(b.lat-a.lat), dLon = toRad(b.lon-a.lon);
+    const s = Math.sin(dLat/2)**2 +
+      Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+
+  // ---- Activation / désactivation ----
+  toggle.addEventListener("click", () => active ? stop() : start());
+
+  function start(){
+    if(!("geolocation" in navigator)){
+      setStatus("Géolocalisation non disponible sur cet appareil.", true);
+      return;
+    }
+    active = true;
+    state = freshState();
+    toggle.dataset.on = "true";
+    toggle.setAttribute("aria-pressed","true");
+    toggleLabel.textContent = "Arrêter la mesure";
+    zone.classList.add("open");
+    resetDisplay();
+    // Le canvas doit être dimensionné une fois visible
+    requestAnimationFrame(() => { sizeCanvases(); draw(); });
+    setStatus("Acquisition du signal GPS…");
+
+    watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+      enableHighAccuracy:true, maximumAge:0, timeout:20000
+    });
+    requestWakeLock();
+  }
+
+  function stop(){
+    active = false;
+    if(watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+    releaseWakeLock();
+    toggle.dataset.on = "false";
+    toggle.setAttribute("aria-pressed","false");
+    toggleLabel.textContent = "Mesurer la pente";
+    zone.classList.remove("open");
+    state = null;               // plus aucune mesure conservée
+  }
+
+  // ---- Réception d'une position ----
+  function onPosition(pos){
+    if(!active) return;
+    const c = pos.coords;
+
+    accEl.textContent = c.accuracy != null ? Math.round(c.accuracy) : "—";
+
+    if(c.altitude == null){
+      setStatus("Altitude GPS pas encore disponible — restez à ciel ouvert quelques instants…");
+      return;
+    }
+    setStatus("Mesure en cours.");
+
+    // Lissage léger de l'altitude
+    const raw = c.altitude;
+    state.emaAlt = state.emaAlt == null ? raw : state.emaAlt + EMA*(raw - state.emaAlt);
+    const alt = state.emaAlt;
+    const cur = { lat:c.latitude, lon:c.longitude, alt };
+
+    altEl.textContent = alt.toFixed(0);
+
+    // Premier point : on pose l'ancre
+    if(!state.anchor){
+      state.anchor = cur;
+      state.history = [{ x:0, y:alt }];
+      draw();
+      return;
+    }
+
+    const d = haversine(state.anchor, cur);
+    state.liveDist = d;
+    const dz = alt - state.anchor.alt;
+
+    if(d > MIN_D) state.liveSlope = dz / d * 100;
+
+    // Verrouillage d'un segment tous les 100 m
+    if(d >= TRIGGER){
+      const slope = dz / d * 100;
+      state.cum += d;
+      state.history.push({ x:state.cum, y:alt });
+      state.locked = slope;
+      state.anchor = cur;
+      state.liveDist = 0;
+      state.liveSlope = slope;     // on affiche la valeur fraîchement verrouillée
+      flashLock();
+    }
+
+    render(dz);
+    draw();
+  }
+
+  function onError(err){
+    const msg = {1:"Autorisation de localisation refusée.",
+                 2:"Position indisponible (signal GPS faible).",
+                 3:"Délai d'attente du GPS dépassé."}[err.code] || "Erreur de localisation.";
+    setStatus(msg, true);
+  }
+
+  // ---- Affichage texte ----
+  let lockTimer = null;
+  function flashLock(){
+    badge.dataset.state = "lock"; badge.textContent = "Point verrouillé";
+    clearTimeout(lockTimer);
+    lockTimer = setTimeout(() => {
+      if(active){ badge.dataset.state = "live"; badge.textContent = "En direct"; }
+    }, 1500);
+  }
+
+  function render(dz){
+    const s = state.liveSlope != null ? state.liveSlope
+            : state.locked != null ? state.locked : null;
+
+    if(s == null){
+      numEl.textContent = "—"; arrowEl.textContent = "→";
+      dirEl.textContent = "avancez pour calculer…";
+    } else {
+      numEl.textContent = (s>=0?"+":"") + s.toFixed(1);
+      if(s > 0.5){ arrowEl.textContent="↗"; arrowEl.style.color="var(--amber)"; dirEl.textContent="montée"; }
+      else if(s < -0.5){ arrowEl.textContent="↘"; arrowEl.style.color="var(--amber)"; dirEl.textContent="descente"; }
+      else { arrowEl.textContent="→"; arrowEl.style.color="var(--teal)"; dirEl.textContent="terrain plat"; }
+    }
+
+    if(badge.dataset.state !== "lock"){
+      badge.dataset.state = "live"; badge.textContent = "En direct";
+    }
+
+    dzEl.textContent = (dz>=0?"+":"") + dz.toFixed(1);
+    distEl.textContent = Math.round(state.liveDist);
+    fillEl.style.width = Math.min(100, state.liveDist/TRIGGER*100) + "%";
+  }
+
+  function resetDisplay(){
+    numEl.textContent="—"; arrowEl.textContent="→"; arrowEl.style.color="var(--amber)";
+    dirEl.textContent="recherche du signal…";
+    badge.dataset.state="idle"; badge.textContent="En attente";
+    distEl.textContent="0"; fillEl.style.width="0%";
+    altEl.textContent="—"; dzEl.textContent="—"; accEl.textContent="—";
+  }
+
+  function setStatus(msg, warn){
+    statusEl.textContent = msg;
+    statusEl.classList.toggle("warn", !!warn);
+  }
+
+  // ---- Wake lock (garde l'écran allumé, iOS 16.4+) ----
+  async function requestWakeLock(){
+    try{ if("wakeLock" in navigator){ wakeLock = await navigator.wakeLock.request("screen"); } }catch(e){}
+  }
+  function releaseWakeLock(){ try{ wakeLock && wakeLock.release(); }catch(e){} wakeLock=null; }
+  document.addEventListener("visibilitychange", () => {
+    if(active && document.visibilityState==="visible" && !wakeLock) requestWakeLock();
+  });
+
+  // ---- Canvas ----
+  const hc = histCanvas.getContext("2d");
+  const zc = zoomCanvas.getContext("2d");
+
+  function sizeCanvas(canvas){
+    const dpr = Math.min(window.devicePixelRatio||1, 3);
+    const r = canvas.getBoundingClientRect();
+    canvas.width  = Math.max(1, Math.round(r.width  * dpr));
+    canvas.height = Math.max(1, Math.round(r.height * dpr));
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    return { w:r.width, h:r.height };
+  }
+  let histSize = {w:0,h:0}, zoomSize = {w:0,h:0};
+  function sizeCanvases(){ histSize = sizeCanvas(histCanvas); zoomSize = sizeCanvas(zoomCanvas); }
+  window.addEventListener("resize", () => { if(active){ sizeCanvases(); draw(); } });
+
+  function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  function draw(){ if(!state) return; drawHistory(); drawZoom(); }
+
+  // Graphique 1 : historique condensé de l'altitude
+  function drawHistory(){
+    const {w,h} = histSize; if(!w) return;
+    hc.clearRect(0,0,w,h);
+    const pad = {l:8,r:8,t:10,b:8};
+    const pts = state.history.slice();
+    // Ajoute le point courant (provisoire) pour un tracé continu
+    if(state.anchor && state.emaAlt!=null){
+      pts.push({ x: state.cum + state.liveDist, y: state.emaAlt });
+    }
+    if(pts.length < 2){
+      hc.fillStyle = css("--muted"); hc.font = "12px ui-monospace,monospace";
+      hc.textAlign="center";
+      hc.fillText("En attente de deux relevés…", w/2, h/2);
+      return;
+    }
+    const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+    let xmin=Math.min(...xs), xmax=Math.max(...xs);
+    let ymin=Math.min(...ys), ymax=Math.max(...ys);
+    if(xmax-xmin < 1) xmax = xmin+1;
+    const py = Math.max(2, (ymax-ymin)*0.15); ymin-=py; ymax+=py;
+    if(ymax-ymin < 2){ const m=(ymin+ymax)/2; ymin=m-1; ymax=m+1; }
+
+    const X = x => pad.l + (x-xmin)/(xmax-xmin)*(w-pad.l-pad.r);
+    const Y = y => pad.t + (1-(y-ymin)/(ymax-ymin))*(h-pad.t-pad.b);
+
+    // Lignes de niveau discrètes
+    hc.strokeStyle = css("--line-soft"); hc.lineWidth=1;
+    for(let i=0;i<=3;i++){ const yy=pad.t+i/3*(h-pad.t-pad.b);
+      hc.beginPath(); hc.moveTo(pad.l,yy); hc.lineTo(w-pad.r,yy); hc.stroke(); }
+
+    // Aire
+    const grad = hc.createLinearGradient(0,pad.t,0,h-pad.b);
+    grad.addColorStop(0, css("--teal-dim")); grad.addColorStop(1,"rgba(84,183,169,0)");
+    hc.beginPath(); hc.moveTo(X(pts[0].x), Y(pts[0].y));
+    for(const p of pts) hc.lineTo(X(p.x), Y(p.y));
+    hc.lineTo(X(pts[pts.length-1].x), h-pad.b); hc.lineTo(X(pts[0].x), h-pad.b); hc.closePath();
+    hc.fillStyle = grad; hc.fill();
+
+    // Ligne
+    hc.beginPath(); hc.moveTo(X(pts[0].x), Y(pts[0].y));
+    for(const p of pts) hc.lineTo(X(p.x), Y(p.y));
+    hc.strokeStyle = css("--teal"); hc.lineWidth=2; hc.lineJoin="round"; hc.stroke();
+
+    // Point courant
+    const last = pts[pts.length-1];
+    hc.fillStyle = css("--amber");
+    hc.beginPath(); hc.arc(X(last.x), Y(last.y), 3.2, 0, Math.PI*2); hc.fill();
+
+    // Repères min / max altitude
+    hc.fillStyle = css("--muted"); hc.font="10px ui-monospace,monospace";
+    hc.textAlign="left";  hc.fillText(Math.round(ymax)+" m", pad.l, pad.t+2);
+    hc.textAlign="left";  hc.fillText(Math.round(ymin)+" m", pad.l, h-pad.b-1);
+  }
+
+  // Graphique 2 : zoom sur la pente courante, largement extrapolée
+  function drawZoom(){
+    const {w,h} = zoomSize; if(!w) return;
+    zc.clearRect(0,0,w,h);
+    const cx=w/2, cy=h/2;
+
+    const s = state.liveSlope != null ? state.liveSlope
+            : state.locked != null ? state.locked : null;
+
+    // Grille de référence + ligne 0 %
+    zc.strokeStyle = css("--line-soft"); zc.lineWidth=1;
+    for(let i=1;i<4;i++){ const xx=i/4*w;
+      zc.beginPath(); zc.moveTo(xx,8); zc.lineTo(xx,h-8); zc.stroke(); }
+    zc.strokeStyle = css("--line"); zc.setLineDash([4,5]);
+    zc.beginPath(); zc.moveTo(10,cy); zc.lineTo(w-10,cy); zc.stroke();
+    zc.setLineDash([]);
+    zc.fillStyle = css("--muted"); zc.font="10px ui-monospace,monospace"; zc.textAlign="left";
+    zc.fillText("0 %", 12, cy-6);
+
+    if(s == null){
+      zc.fillStyle = css("--muted"); zc.font="12px ui-monospace,monospace"; zc.textAlign="center";
+      zc.fillText("Avancez pour visualiser la pente…", cx, cy+22);
+      return;
+    }
+
+    // Amplitude adaptative : la pente occupe toujours largement le cadre
+    const ref = Math.max(12, Math.abs(s)*1.15);
+    const amp = (h/2 - 22);
+    const slopeToY = val => cy - (val/ref)*amp;   // val en %
+
+    // Rampe extrapolée sur toute la largeur (partie mesurée + prolongement)
+    const yL = slopeToY(-s), yR = slopeToY(s);     // symétrique autour du centre
+    // Prolongement translucide
+    zc.strokeStyle = "rgba(255,194,75,.28)"; zc.lineWidth=6; zc.lineCap="round";
+    zc.beginPath(); zc.moveTo(10,yL); zc.lineTo(w-10,yR); zc.stroke();
+
+    // Portion réellement mesurée (au centre), tracée vive
+    const frac = Math.max(0.12, Math.min(1, state.liveDist/TRIGGER)); // 0..1
+    const halfSpan = (w-20)/2 * frac;
+    const mx0=cx-halfSpan, mx1=cx+halfSpan;
+    const my0=slopeToY(-s*frac), my1=slopeToY(s*frac);
+    zc.strokeStyle = css("--amber"); zc.lineWidth=5; zc.lineCap="round";
+    zc.beginPath(); zc.moveTo(mx0,my0); zc.lineTo(mx1,my1); zc.stroke();
+
+    // Flèche de direction au bout droit du prolongement
+    const ang = Math.atan2(yR-yL, w-20);
+    drawArrow(zc, w-10, yR, ang, css("--amber"));
+
+    // Points d'appui : ancre (gauche) et position courante
+    zc.fillStyle = css("--text");
+    zc.beginPath(); zc.arc(mx0,my0,4,0,Math.PI*2); zc.fill();
+    zc.fillStyle = css("--amber");
+    zc.beginPath(); zc.arc(mx1,my1,5,0,Math.PI*2); zc.fill();
+    zc.strokeStyle = css("--ink"); zc.lineWidth=2; zc.stroke();
+
+    // Étiquette valeur
+    zc.fillStyle = css("--amber");
+    zc.font = "700 26px ui-monospace,monospace"; zc.textAlign="right";
+    zc.fillText((s>=0?"+":"")+s.toFixed(1)+" %", w-14, 26);
+    zc.fillStyle = css("--muted"); zc.font="11px ui-monospace,monospace";
+    zc.fillText(Math.round(state.liveDist)+" m mesurés · reste extrapolé", w-14, h-10);
+  }
+
+  function drawArrow(ctx,x,y,ang,color){
+    const len=11;
+    ctx.save(); ctx.translate(x,y); ctx.rotate(ang);
+    ctx.fillStyle=color; ctx.beginPath();
+    ctx.moveTo(0,0); ctx.lineTo(-len,-6); ctx.lineTo(-len,6); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+})();
+</script>
 </body>
 </html>
