@@ -51,6 +51,11 @@
   .title-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
   h1{margin:0;font-size:20px;letter-spacing:.04em;font-weight:700}
   h1 .sub{display:block;font-size:11px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase;margin-top:4px;font-weight:600}
+  .ver{
+    font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--teal);
+    border:1px solid var(--line);background:var(--surface);
+    padding:5px 10px;border-radius:999px;align-self:center;white-space:nowrap;
+  }
 
   .toggle{
     appearance:none;border:1px solid var(--line);border-radius:14px;
@@ -130,6 +135,7 @@
 <header>
   <div class="title-row">
     <h1>PENTE<span class="sub">Inclinomètre GPS</span></h1>
+    <span id="version" class="ver mono"></span>
   </div>
   <button id="toggle" class="toggle" data-on="false" aria-pressed="false">
     <span class="dot"></span>
