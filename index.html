@@ -48,14 +48,57 @@
 
   /* En-tête */
   header{display:flex;flex-direction:column;gap:14px}
-  .title-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .title-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
   h1{margin:0;font-size:20px;letter-spacing:.04em;font-weight:700}
   h1 .sub{display:block;font-size:11px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase;margin-top:4px;font-weight:600}
+  /* Badge de version — bien contrasté et clairement tactile */
   .ver{
-    font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--teal);
-    border:1px solid var(--line);background:var(--surface);
-    padding:5px 10px;border-radius:999px;align-self:center;white-space:nowrap;
+    appearance:none;font-family:inherit;cursor:pointer;
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:14px;font-weight:800;letter-spacing:.04em;
+    color:var(--amber);background:var(--surface-2);
+    border:1px solid var(--amber);border-radius:999px;
+    padding:8px 14px;white-space:nowrap;align-self:center;
+    transition:transform .05s,background .18s;
   }
+  .ver:active{transform:scale(.96);background:var(--amber-dim)}
+  .ver .info{
+    width:16px;height:16px;border-radius:50%;
+    border:1.5px solid var(--amber);
+    display:inline-flex;align-items:center;justify-content:center;
+    font-size:10px;font-weight:800;font-style:normal;line-height:1;
+  }
+
+  /* Fenêtre d'information de version (feuille du bas) */
+  .modal{
+    position:fixed;inset:0;z-index:50;display:flex;
+    align-items:flex-end;justify-content:center;
+    background:rgba(5,9,10,.6);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+    padding:16px calc(env(safe-area-inset-right) + 14px)
+            calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-left) + 14px);
+    animation:fade .18s ease;
+  }
+  .modal[hidden]{display:none}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .modal-card{
+    width:100%;max-width:520px;background:var(--surface);
+    border:1px solid var(--line);border-radius:20px;padding:18px 18px 20px;
+    animation:rise .24s ease;
+  }
+  @keyframes rise{from{transform:translateY(18px);opacity:0}to{transform:none;opacity:1}}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .modal-title{font-size:17px;font-weight:800;letter-spacing:.02em}
+  .modal-title b{color:var(--amber);font-weight:800}
+  .modal-close{
+    appearance:none;border:1px solid var(--line);background:var(--surface-2);
+    color:var(--text);border-radius:11px;width:36px;height:36px;font-size:15px;cursor:pointer;
+  }
+  .modal-close:active{background:var(--line)}
+  .modal-date{font-size:12.5px;color:var(--muted);margin:7px 0 15px;font-weight:600;letter-spacing:.02em}
+  .modal-sub{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:9px}
+  .modal-log{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:11px}
+  .modal-log li{position:relative;padding-left:19px;font-size:13.5px;line-height:1.5;color:var(--text)}
+  .modal-log li::before{content:"";position:absolute;left:2px;top:7px;width:7px;height:7px;border-radius:50%;background:var(--teal)}
 
   .toggle{
     appearance:none;border:1px solid var(--line);border-radius:14px;
@@ -135,7 +178,10 @@
 <header>
   <div class="title-row">
     <h1>PENTE<span class="sub">Inclinomètre GPS</span></h1>
-    <span id="version" class="ver mono"></span>
+    <button id="version" class="ver" type="button" aria-haspopup="dialog" aria-label="Informations de version">
+      <span id="verLabel" class="mono"></span>
+      <span class="info" aria-hidden="true">i</span>
+    </button>
   </div>
   <button id="toggle" class="toggle" data-on="false" aria-pressed="false">
     <span class="dot"></span>
@@ -209,6 +255,19 @@
   Mesure hors ligne, aucune donnée transmise. À héberger en <code>https</code> (obligatoire pour le GPS sur iPhone).
 </footer>
 
+<!-- Fenêtre d'information de version -->
+<div id="verModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="verTitle">
+    <div class="modal-head">
+      <span id="verTitle" class="modal-title">Version <b id="mVer">—</b></span>
+      <button id="verClose" class="modal-close" type="button" aria-label="Fermer">✕</button>
+    </div>
+    <div class="modal-date">Mise à jour du <span id="mDate">—</span></div>
+    <div class="modal-sub">Dernières modifications</div>
+    <ul id="mLog" class="modal-log"></ul>
+  </div>
+</div>
+
 <script>
 "use strict";
 (function(){
@@ -220,6 +279,36 @@
   const distEl = $("dist"), fillEl = $("fill");
   const altEl = $("alt"), dzEl = $("dz"), accEl = $("acc"), statusEl = $("status");
   const histCanvas = $("histChart"), zoomCanvas = $("zoomChart");
+
+  // ---- Version — À INCRÉMENTER À CHAQUE DÉPLOIEMENT ----
+  // Seule ligne à modifier : le badge en haut de l'écran et le titre de
+  // l'onglet reprennent automatiquement cette valeur.
+  const VERSION    = "V1";
+  const BUILD_DATE = "26 juillet 2026";
+  const CHANGELOG  = [
+    "Pente calculée à partir de la distance réellement parcourue le long de la route : les petits déplacements entre relevés GPS sont additionnés, au lieu de mesurer une ligne droite « à vol d'oiseau » qui coupait les virages et exagérait la pente.",
+    "Filtre anti-bruit adapté à la précision GPS annoncée, pour ne pas gonfler la distance à l'arrêt.",
+    "Numéro de version affiché en permanence, avec cette fiche d'info au toucher (date + dernières modifications)."
+  ];
+
+  // Injection du numéro de version (badge + titre de l'onglet)
+  $("verLabel").textContent = VERSION;
+  document.title = "Pente " + VERSION + " — inclinomètre GPS";
+
+  // Fiche d'info version
+  $("mVer").textContent  = VERSION;
+  $("mDate").textContent = BUILD_DATE;
+  (function(){
+    const ul = $("mLog");
+    CHANGELOG.forEach(txt => { const li = document.createElement("li"); li.textContent = txt; ul.appendChild(li); });
+  })();
+  const verModal = $("verModal");
+  function openVer(){ verModal.hidden = false; }
+  function closeVer(){ verModal.hidden = true; }
+  $("version").addEventListener("click", openVer);
+  $("verClose").addEventListener("click", closeVer);
+  verModal.addEventListener("click", e => { if(e.target === verModal) closeVer(); }); // clic hors carte
+  document.addEventListener("keydown", e => { if(e.key === "Escape" && !verModal.hidden) closeVer(); });
 
   const TRIGGER = 100;   // distance PARCOURUE (m) déclenchant un nouveau point de référence
   const MIN_D   = 6;     // distance mini (m) avant de calculer une pente (anti-bruit GPS)
