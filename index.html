@@ -106,6 +106,44 @@
     padding:2px 7px;border-radius:999px;vertical-align:middle;
   }
   .ver-block:not(:last-child){border-bottom:1px solid var(--line-soft);padding-bottom:20px}
+
+  /* Bouton secondaire : méthode 2 points */
+  .toggle2{
+    appearance:none;cursor:pointer;width:100%;
+    border:1px solid var(--line);border-radius:14px;background:transparent;
+    color:var(--muted);font-family:inherit;font-size:14px;font-weight:600;letter-spacing:.02em;
+    padding:13px 16px;display:flex;align-items:center;justify-content:center;gap:9px;
+    transition:border-color .18s,color .18s,transform .05s;
+  }
+  .toggle2:active{transform:scale(.99)}
+  .toggle2 .ic{width:9px;height:9px;border:1.5px solid var(--teal);border-radius:2px;transform:rotate(45deg);flex:0 0 auto}
+
+  /* Fenêtre 2 points */
+  .dn-intro{font-size:13px;color:var(--muted);line-height:1.5;margin:14px 0 16px}
+  .dn-capture{
+    appearance:none;cursor:pointer;width:100%;font-family:inherit;
+    border:1px solid var(--amber);border-radius:14px;background:var(--amber-dim);color:var(--amber);
+    font-size:16px;font-weight:800;letter-spacing:.02em;padding:17px;
+    transition:transform .05s,background .18s;
+  }
+  .dn-capture:active{transform:scale(.99)}
+  .dn-capture:disabled{opacity:.55}
+  .dn-hint{font-size:12.5px;color:var(--muted);text-align:center;margin:11px 2px 2px;line-height:1.5;min-height:1.3em}
+  .dn-hint.warn{color:var(--danger)}
+  .dn-sub{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:18px 0 10px}
+  .dn-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px;max-height:40vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .dn-empty{font-size:13px;color:var(--muted);text-align:center;padding:12px 0}
+  .dn-item{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:12px;padding:11px 13px}
+  .dn-item-main{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .dn-dz{font-size:21px;font-weight:800;color:var(--text);letter-spacing:-.01em}
+  .dn-num{font-size:11px;color:var(--muted);font-weight:700}
+  .dn-item-sub{font-size:12px;color:var(--muted);margin-top:3px}
+  .dn-clear{
+    appearance:none;cursor:pointer;margin-top:14px;width:100%;font-family:inherit;
+    border:1px solid var(--line);border-radius:11px;background:var(--surface-2);
+    color:var(--muted);font-size:13px;font-weight:600;padding:11px;
+  }
+  .dn-clear:active{background:var(--line)}
   .modal-log{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:11px}
   .modal-log li{position:relative;padding-left:19px;font-size:13.5px;line-height:1.5;color:var(--text)}
   .modal-log li::before{content:"";position:absolute;left:2px;top:7px;width:7px;height:7px;border-radius:50%;background:var(--teal)}
@@ -197,6 +235,10 @@
     <span class="dot"></span>
     <span id="toggleLabel">Mesurer la pente</span>
   </button>
+  <button id="dnOpen" class="toggle2" type="button">
+    <span class="ic" aria-hidden="true"></span>
+    <span>Méthode 2 points · dénivelé</span>
+  </button>
 </header>
 
 <section id="zone" class="zone" aria-live="polite">
@@ -276,6 +318,22 @@
   </div>
 </div>
 
+<!-- Méthode 2 points : dénivelé manuel -->
+<div id="dnModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dnTitle">
+    <div class="modal-head">
+      <span id="dnTitle" class="modal-title">Dénivelé — mesure à 2 points</span>
+      <button id="dnClose" class="modal-close" type="button" aria-label="Fermer">✕</button>
+    </div>
+    <p class="dn-intro">Méthode simple et indépendante : capturez un premier point, déplacez-vous, capturez un second point. L'app calcule le dénivelé entre les deux (avec la distance et la pente correspondante). Recommencez autant de fois que vous voulez.</p>
+    <button id="dnCapture" class="dn-capture" type="button">Capturer le point A</button>
+    <div id="dnHint" class="dn-hint"></div>
+    <div class="dn-sub">Mesures</div>
+    <ul id="dnList" class="dn-list"></ul>
+    <button id="dnClear" class="dn-clear" type="button" hidden>Vider la liste</button>
+  </div>
+</div>
+
 <script>
 "use strict";
 (function(){
@@ -296,6 +354,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V4", date:"26 juillet 2026", changes:[
+      "Nouveau bouton « Méthode 2 points · dénivelé » : une approche manuelle indépendante. On capture un point A puis un point B, l'app calcule le dénivelé (avec distance et pente) et l'ajoute à une liste que l'on peut allonger à volonté. La mesure automatique n'est pas modifiée."
+    ]},
     { v:"V3", date:"26 juillet 2026", changes:[
       "Correction du défaut « 100 m à l'arrêt » : la distance est maintenant obtenue en intégrant la vitesse GPS dans le temps (vitesse × durée), et non plus en additionnant les sauts de position. À l'arrêt la vitesse est ~0, donc rien ne s'accumule, même avec une précision GPS médiocre.",
       "Seuil de mouvement relevé à 5 km/h et garde-fou de plausibilité : la distance parcourue ne peut plus dépasser déraisonnablement la distance à vol d'oiseau depuis l'ancre.",
@@ -702,6 +763,120 @@
     ctx.moveTo(0,0); ctx.lineTo(-len,-6); ctx.lineTo(-len,6); ctx.closePath(); ctx.fill();
     ctx.restore();
   }
+
+  // ============================================================
+  //  MÉTHODE 2 POINTS — dénivelé manuel.
+  //  Totalement indépendante de la mesure automatique ci-dessus :
+  //  elle ne touche ni à `state`, ni au `watchPosition` du bouton
+  //  principal. Elle fait ses propres relevés ponctuels via
+  //  getCurrentPosition et réutilise seulement haversine().
+  // ============================================================
+  (function(){
+    const openBtn  = $("dnOpen"),  modal = $("dnModal"), closeBtn = $("dnClose");
+    const capBtn   = $("dnCapture"), hint = $("dnHint");
+    const listEl   = $("dnList"),  clearBtn = $("dnClear");
+
+    let dnStep = 0;        // 0 = attend le point A ; 1 = attend le point B
+    let pointA = null;     // {lat,lon,alt,acc,t}
+    let busy = false;      // acquisition GPS en cours
+    const results = [];    // mémoire de session (la plus récente en tête)
+
+    function open(){ modal.hidden = false; }
+    function close(){ modal.hidden = true; }
+    openBtn.addEventListener("click", open);
+    closeBtn.addEventListener("click", close);
+    modal.addEventListener("click", e => { if(e.target === modal) close(); });
+    document.addEventListener("keydown", e => { if(e.key === "Escape" && !modal.hidden) close(); });
+
+    function setHint(msg, warn){ hint.textContent = msg; hint.classList.toggle("warn", !!warn); }
+
+    function resetCapture(){
+      dnStep = 0; pointA = null; busy = false;
+      capBtn.disabled = false;
+      capBtn.textContent = "Capturer le point A";
+      setHint("Placez-vous au premier point, puis appuyez.");
+    }
+
+    capBtn.addEventListener("click", () => {
+      if(busy) return;
+      if(!("geolocation" in navigator)){ setHint("Géolocalisation non disponible.", true); return; }
+      busy = true; capBtn.disabled = true;
+      setHint("Acquisition de la position…");
+      navigator.geolocation.getCurrentPosition(onFix, onFail, {
+        enableHighAccuracy:true, maximumAge:0, timeout:20000
+      });
+    });
+
+    function onFix(pos){
+      const c = pos.coords;
+      busy = false; capBtn.disabled = false;
+      if(c.altitude == null){
+        setHint("Altitude GPS indisponible ici — réessayez à ciel ouvert.", true);
+        return;
+      }
+      const p = { lat:c.latitude, lon:c.longitude, alt:c.altitude, acc:c.accuracy, t:Date.now() };
+      if(dnStep === 0){
+        pointA = p; dnStep = 1;
+        capBtn.textContent = "Capturer le point B";
+        setHint("Point A enregistré à " + p.alt.toFixed(0) + " m. Rendez-vous au point B, puis appuyez.");
+      } else {
+        addResult(pointA, p);
+        resetCapture();
+      }
+    }
+
+    function onFail(err){
+      busy = false; capBtn.disabled = false;
+      const msg = {1:"Autorisation de localisation refusée.",
+                   2:"Position indisponible (signal faible).",
+                   3:"Délai d'attente dépassé."}[err.code] || "Erreur de localisation.";
+      setHint(msg + " Réessayez.", true);
+    }
+
+    function addResult(a, b){
+      const dz = b.alt - a.alt;                 // dénivelé (m)
+      const dist = haversine(a, b);             // distance à vol d'oiseau entre A et B (m)
+      const slope = dist > 1 ? dz / dist * 100 : null;
+      results.unshift({ dz, dist, slope, t:b.t });
+      render();
+    }
+
+    function render(){
+      listEl.innerHTML = "";
+      clearBtn.hidden = results.length === 0;
+      if(results.length === 0){
+        const li = document.createElement("li");
+        li.className = "dn-empty";
+        li.textContent = "Aucune mesure pour l'instant.";
+        listEl.appendChild(li);
+        return;
+      }
+      results.forEach((r, i) => {
+        const li = document.createElement("li");
+        li.className = "dn-item";
+        const time = new Date(r.t).toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+        const dzTxt    = (r.dz >= 0 ? "+" : "") + r.dz.toFixed(1) + " m";
+        const distTxt  = Math.round(r.dist) + " m";
+        const slopeTxt = r.slope == null ? "—" : (r.slope >= 0 ? "+" : "") + r.slope.toFixed(1) + " %";
+
+        const main = document.createElement("div"); main.className = "dn-item-main";
+        const dzEl = document.createElement("span"); dzEl.className = "dn-dz";  dzEl.textContent = dzTxt;
+        const nEl  = document.createElement("span"); nEl.className  = "dn-num"; nEl.textContent  = "#" + (results.length - i);
+        main.appendChild(dzEl); main.appendChild(nEl);
+
+        const sub = document.createElement("div"); sub.className = "dn-item-sub";
+        sub.textContent = "distance " + distTxt + " · pente " + slopeTxt + " · " + time;
+
+        li.appendChild(main); li.appendChild(sub);
+        listEl.appendChild(li);
+      });
+    }
+
+    clearBtn.addEventListener("click", () => { results.length = 0; render(); });
+
+    resetCapture();
+    render();
+  })();
 
 })();
 </script>
