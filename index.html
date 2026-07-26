@@ -296,6 +296,11 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V3", date:"26 juillet 2026", changes:[
+      "Correction du défaut « 100 m à l'arrêt » : la distance est maintenant obtenue en intégrant la vitesse GPS dans le temps (vitesse × durée), et non plus en additionnant les sauts de position. À l'arrêt la vitesse est ~0, donc rien ne s'accumule, même avec une précision GPS médiocre.",
+      "Seuil de mouvement relevé à 5 km/h et garde-fou de plausibilité : la distance parcourue ne peut plus dépasser déraisonnablement la distance à vol d'oiseau depuis l'ancre.",
+      "Pente affichée seulement au-delà de 12 m parcourus (fini les valeurs folles sur quelques mètres)."
+    ]},
     { v:"V2", date:"26 juillet 2026", changes:[
       "Correction majeure : à l'arrêt, la distance n'avance plus. Le « bruit » du GPS immobile faisait défiler les 100 m tout seuls et verrouillait un segment avec une pente aberrante. Le déplacement réel est désormais confirmé par la vitesse GPS (effet Doppler) ; sinon la distance reste figée.",
       "Fiche d'info transformée en historique complet des versions."
@@ -339,9 +344,9 @@
   document.addEventListener("keydown", e => { if(e.key === "Escape" && !verModal.hidden) closeVer(); });
 
   const TRIGGER = 100;   // distance PARCOURUE (m) déclenchant un nouveau point de référence
-  const MIN_D   = 6;     // distance mini (m) avant de calculer une pente (anti-bruit GPS)
-  const STEP_MIN= 4;     // pas mini (m) entre deux fixes retenus (repli, si vitesse absente)
-  const SPEED_MIN=0.5;   // vitesse GPS mini (m/s ≈ 1,8 km/h) pour considérer qu'on se déplace
+  const MIN_D   = 12;    // distance mini (m) avant d'afficher une pente (évite les valeurs folles sur quelques mètres)
+  const STEP_MIN= 5;     // pas mini (m) entre deux fixes retenus (repli, si vitesse absente)
+  const SPEED_MIN=1.4;   // vitesse GPS mini (m/s ≈ 5 km/h) : sous ce seuil = à l'arrêt (rejette le bruit)
   const EMA     = 0.35;  // lissage léger de l'altitude
 
   let active = false, watchId = null, wakeLock = null;
@@ -350,7 +355,8 @@
   function freshState(){
     return {
       anchor:null,      // point de référence d'altitude {lat,lon,alt}
-      prev:null,        // dernier point RETENU, pour cumuler la distance le long du tracé
+      prev:null,        // dernier point RETENU (repli sans vitesse)
+      lastT:null,       // horodatage du dernier relevé (ms) pour intégrer la vitesse
       cum:0,            // distance cumulée aux points déjà verrouillés (m)
       emaAlt:null,      // altitude lissée
       liveDist:0,       // distance PARCOURUE depuis l'ancre, le long de la route (m)
@@ -435,29 +441,37 @@
       return;
     }
 
-    // --- Distance LE LONG DE LA ROUTE, uniquement quand on bouge vraiment ---
-    // On suit la trajectoire réelle (somme des pas) pour que la longueur
-    // épouse les virages au lieu de les « couper » à vol d'oiseau. Mais on
-    // ne cumule QUE si le déplacement est confirmé, sinon la « vibration » du
-    // GPS à l'arrêt ferait défiler les 100 m et produirait une pente aberrante.
-    const step = haversine(state.prev, cur);
-    const spd  = (c.speed != null && c.speed >= 0) ? c.speed : null;
+    // --- Distance parcourue : on INTÈGRE LA VITESSE GPS dans le temps ---
+    // La vitesse (coords.speed, issue de l'effet Doppler) est bien plus stable
+    // que la différence de deux positions : à l'arrêt elle vaut ~0, donc rien
+    // ne s'accumule, même si le point « saute » de plusieurs mètres à chaque
+    // relevé. Distance = vitesse × durée écoulée. C'est ce qui règle le défaut
+    // des 100 m qui défilaient tout seuls sans qu'on bouge.
+    const now = (pos.timestamp != null) ? pos.timestamp : Date.now();
+    const spd = (c.speed != null && c.speed >= 0) ? c.speed : null;
 
     if(spd != null){
-      // Cas normal (iPhone) : la vitesse GPS (effet Doppler) tranche de façon
-      // fiable entre mouvement et arrêt. À l'arrêt, la référence se met quand
-      // même à jour → le bruit est purement et simplement ignoré.
-      if(spd >= SPEED_MIN) state.liveDist += step;
-      state.prev = cur;
-    } else {
-      // Repli si la vitesse n'est pas fournie : on cumule les pas, mais on
-      // n'avance la référence que lorsqu'un vrai déplacement est franchi.
-      const gate = Math.max(STEP_MIN, (c.accuracy || 0) * 0.5);
-      if(step >= gate){
-        state.liveDist += step;
-        state.prev = cur;
+      if(spd >= SPEED_MIN && state.lastT != null){
+        const dt = (now - state.lastT) / 1000;          // secondes
+        if(dt > 0 && dt < 10) state.liveDist += spd * dt;
       }
+      state.prev = cur;                                 // référence tenue à jour
+    } else {
+      // Repli si l'iPhone ne fournit pas la vitesse : cumul des pas, avec un
+      // seuil lié à la précision ; la référence n'avance qu'au vrai déplacement.
+      const step = haversine(state.prev, cur);
+      const gate = Math.max(STEP_MIN, (c.accuracy || 0) * 0.6);
+      if(step >= gate){ state.liveDist += step; state.prev = cur; }
     }
+    state.lastT = now;
+
+    // Garde-fou de plausibilité : sur une vraie route, même en épingle, la
+    // distance parcourue ne peut pas dépasser énormément la distance à vol
+    // d'oiseau depuis l'ancre. Si le rapport explose, c'est du bruit à l'arrêt
+    // — on plafonne pour ne jamais verrouiller un faux segment de 100 m.
+    const crow = haversine(state.anchor, cur);
+    const plausible = crow * 4 + 15;
+    if(state.liveDist > plausible) state.liveDist = plausible;
 
     // Dénivelé net depuis l'ancre ; pente = dénivelé / distance parcourue
     const dz = alt - state.anchor.alt;
