@@ -215,8 +215,9 @@
   const altEl = $("alt"), dzEl = $("dz"), accEl = $("acc"), statusEl = $("status");
   const histCanvas = $("histChart"), zoomCanvas = $("zoomChart");
 
-  const TRIGGER = 100;   // distance (m) déclenchant un nouveau point de référence
+  const TRIGGER = 100;   // distance PARCOURUE (m) déclenchant un nouveau point de référence
   const MIN_D   = 6;     // distance mini (m) avant de calculer une pente (anti-bruit GPS)
+  const STEP_MIN= 4;     // pas mini (m) entre deux fixes retenus (filtre la « vibration » GPS à l'arrêt)
   const EMA     = 0.35;  // lissage léger de l'altitude
 
   let active = false, watchId = null, wakeLock = null;
@@ -224,10 +225,11 @@
 
   function freshState(){
     return {
-      anchor:null,      // point de référence {lat,lon,alt}
-      cum:0,            // distance cumulée à l'ancre (m)
+      anchor:null,      // point de référence d'altitude {lat,lon,alt}
+      prev:null,        // dernier point RETENU, pour cumuler la distance le long du tracé
+      cum:0,            // distance cumulée aux points déjà verrouillés (m)
       emaAlt:null,      // altitude lissée
-      liveDist:0,       // distance depuis l'ancre (m)
+      liveDist:0,       // distance PARCOURUE depuis l'ancre, le long de la route (m)
       liveSlope:null,   // pente provisoire (%) du segment en cours
       locked:null,      // dernière pente verrouillée (%)
       history:[],       // [{x:distanceCumulée, y:altitude}]
@@ -300,27 +302,46 @@
 
     altEl.textContent = alt.toFixed(0);
 
-    // Premier point : on pose l'ancre
+    // Premier point : on pose l'ancre (référence d'altitude + départ du tracé)
     if(!state.anchor){
       state.anchor = cur;
+      state.prev   = cur;
       state.history = [{ x:0, y:alt }];
       draw();
       return;
     }
 
-    const d = haversine(state.anchor, cur);
-    state.liveDist = d;
+    // --- Distance LE LONG DE LA ROUTE (et non à vol d'oiseau) ---
+    // On additionne les petits pas successifs entre relevés GPS. Ainsi, quand
+    // la route tourne, la longueur suit vraiment la trajectoire au lieu de
+    // « couper » le virage. C'est ce « run » (course horizontale) qui sert de
+    // dénominateur : le mesurer à vol d'oiseau le raccourcit et fait ressortir
+    // une pente exagérée dans les virages prononcés.
+    const step = haversine(state.prev, cur);
+
+    // Filtre anti-bruit : à l'arrêt le GPS « vibre » et gonflerait la distance.
+    // On ne retient un pas que s'il dépasse un seuil (adapté à la précision
+    // annoncée). Tant qu'un déplacement réel n'est pas confirmé, on ne bouge
+    // pas le point de départ du pas : la distance finit donc par se cumuler
+    // correctement, même à allure lente (les petits pas s'additionnent).
+    const gate = Math.max(STEP_MIN, (c.accuracy || 0) * 0.5);
+    if(step >= gate){
+      state.liveDist += step;
+      state.prev = cur;
+    }
+
+    // Dénivelé net depuis l'ancre ; pente = dénivelé / distance parcourue
     const dz = alt - state.anchor.alt;
+    if(state.liveDist > MIN_D) state.liveSlope = dz / state.liveDist * 100;
 
-    if(d > MIN_D) state.liveSlope = dz / d * 100;
-
-    // Verrouillage d'un segment tous les 100 m
-    if(d >= TRIGGER){
-      const slope = dz / d * 100;
-      state.cum += d;
+    // Verrouillage d'un segment tous les 100 m PARCOURUS le long de la route
+    if(state.liveDist >= TRIGGER){
+      const slope = dz / state.liveDist * 100;
+      state.cum += state.liveDist;
       state.history.push({ x:state.cum, y:alt });
       state.locked = slope;
-      state.anchor = cur;
+      state.anchor = cur;          // nouvelle référence d'altitude
+      state.prev   = cur;
       state.liveDist = 0;
       state.liveSlope = slope;     // on affiche la valeur fraîchement verrouillée
       flashLock();
