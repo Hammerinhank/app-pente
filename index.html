@@ -354,6 +354,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V6", date:"26 juillet 2026", changes:[
+      "Prise en charge de la marche à pied. Le seuil de mouvement, fixé à 5 km/h en V3 pour ignorer le bruit GPS à l'arrêt, empêchait le compteur d'avancer à allure de marche : il restait bloqué à 0/100 m. Abaissé à ~2 km/h, ce qui capte la marche normale. Le bruit à l'arrêt reste neutralisé par le plafond de plausibilité (distance vs vol d'oiseau depuis l'ancre) et par l'affichage de la pente conditionné à une faible incertitude."
+    ]},
     { v:"V5", date:"26 juillet 2026", changes:[
       "Fin des pentes intermédiaires aberrantes (−80 %, etc.). La pente du segment n'est plus un simple dénivelé/distance sur deux points, mais une régression linéaire par moindres carrés sur l'ensemble des relevés du segment. Le chiffre ne s'affiche que lorsque son incertitude estimée est faible (≤ ±4 %), puis il s'affine jusqu'aux 100 m ; la valeur verrouillée profite elle aussi de toutes les mesures."
     ]},
@@ -412,7 +415,7 @@
   const MIN_SAMPLES= 4;  // nb mini de relevés dans le segment pour tenter une régression
   const SE_MAX_PCT = 4;  // on n'affiche la pente que si son incertitude est ≤ ±4 %
   const STEP_MIN= 5;     // pas mini (m) entre deux fixes retenus (repli, si vitesse absente)
-  const SPEED_MIN=1.4;   // vitesse GPS mini (m/s ≈ 5 km/h) : sous ce seuil = à l'arrêt (rejette le bruit)
+  const SPEED_MIN=0.6;   // vitesse GPS mini (m/s ≈ 2 km/h) : capte la marche ; sous ce seuil = à l'arrêt
   const EMA     = 0.35;  // lissage léger de l'altitude
 
   let active = false, watchId = null, wakeLock = null;
