@@ -354,6 +354,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V5", date:"26 juillet 2026", changes:[
+      "Fin des pentes intermédiaires aberrantes (−80 %, etc.). La pente du segment n'est plus un simple dénivelé/distance sur deux points, mais une régression linéaire par moindres carrés sur l'ensemble des relevés du segment. Le chiffre ne s'affiche que lorsque son incertitude estimée est faible (≤ ±4 %), puis il s'affine jusqu'aux 100 m ; la valeur verrouillée profite elle aussi de toutes les mesures."
+    ]},
     { v:"V4", date:"26 juillet 2026", changes:[
       "Nouveau bouton « Méthode 2 points · dénivelé » : une approche manuelle indépendante. On capture un point A puis un point B, l'app calcule le dénivelé (avec distance et pente) et l'ajoute à une liste que l'on peut allonger à volonté. La mesure automatique n'est pas modifiée."
     ]},
@@ -405,7 +408,9 @@
   document.addEventListener("keydown", e => { if(e.key === "Escape" && !verModal.hidden) closeVer(); });
 
   const TRIGGER = 100;   // distance PARCOURUE (m) déclenchant un nouveau point de référence
-  const MIN_D   = 12;    // distance mini (m) avant d'afficher une pente (évite les valeurs folles sur quelques mètres)
+  const SHOW_MIN_D = 15; // recul mini (m) avant d'envisager d'afficher une pente
+  const MIN_SAMPLES= 4;  // nb mini de relevés dans le segment pour tenter une régression
+  const SE_MAX_PCT = 4;  // on n'affiche la pente que si son incertitude est ≤ ±4 %
   const STEP_MIN= 5;     // pas mini (m) entre deux fixes retenus (repli, si vitesse absente)
   const SPEED_MIN=1.4;   // vitesse GPS mini (m/s ≈ 5 km/h) : sous ce seuil = à l'arrêt (rejette le bruit)
   const EMA     = 0.35;  // lissage léger de l'altitude
@@ -421,7 +426,8 @@
       cum:0,            // distance cumulée aux points déjà verrouillés (m)
       emaAlt:null,      // altitude lissée
       liveDist:0,       // distance PARCOURUE depuis l'ancre, le long de la route (m)
-      liveSlope:null,   // pente provisoire (%) du segment en cours
+      samples:[],       // nuage du segment : [{d:distance, a:altitude}] pour la régression
+      liveSlope:null,   // pente du segment en cours (%), issue de la régression
       locked:null,      // dernière pente verrouillée (%)
       history:[],       // [{x:distanceCumulée, y:altitude}]
     };
@@ -434,6 +440,25 @@
     const s = Math.sin(dLat/2)**2 +
       Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLon/2)**2;
     return 2*R*Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+
+  // Pente du segment par moindres carrés : on ajuste altitude = m·distance + b
+  // sur TOUT le nuage {d,a}. Renvoie la pente m (m/m) et son erreur-type se,
+  // ce qui permet de n'afficher la valeur que lorsqu'elle est fiable.
+  function segSlope(samples){
+    const n = samples.length;
+    if(n < 3) return null;
+    let Sd=0,Sa=0,Sdd=0,Sda=0,Saa=0;
+    for(const s of samples){ Sd+=s.d; Sa+=s.a; Sdd+=s.d*s.d; Sda+=s.d*s.a; Saa+=s.a*s.a; }
+    const Sxx = Sdd - Sd*Sd/n;
+    if(!(Sxx > 1e-3)) return null;                 // pas assez d'étalement en distance
+    const Sxy = Sda - Sd*Sa/n;
+    const Syy = Saa - Sa*Sa/n;
+    const m   = Sxy / Sxx;                          // pente (m/m)
+    const rss = Math.max(0, Syy - m*Sxy);          // somme des carrés résiduels
+    const sigma2 = rss / (n - 2);                  // variance résiduelle (bruit d'altitude estimé)
+    const se  = Math.sqrt(sigma2 / Sxx);           // erreur-type de la pente (m/m)
+    return { m, se };
   }
 
   // ---- Activation / désactivation ----
@@ -498,6 +523,7 @@
       state.anchor = cur;
       state.prev   = cur;
       state.history = [{ x:0, y:alt }];
+      state.samples = [{ d:0, a:alt }];
       draw();
       return;
     }
@@ -506,15 +532,15 @@
     // La vitesse (coords.speed, issue de l'effet Doppler) est bien plus stable
     // que la différence de deux positions : à l'arrêt elle vaut ~0, donc rien
     // ne s'accumule, même si le point « saute » de plusieurs mètres à chaque
-    // relevé. Distance = vitesse × durée écoulée. C'est ce qui règle le défaut
-    // des 100 m qui défilaient tout seuls sans qu'on bouge.
+    // relevé. Distance = vitesse × durée écoulée.
     const now = (pos.timestamp != null) ? pos.timestamp : Date.now();
     const spd = (c.speed != null && c.speed >= 0) ? c.speed : null;
+    let moved = false;
 
     if(spd != null){
       if(spd >= SPEED_MIN && state.lastT != null){
         const dt = (now - state.lastT) / 1000;          // secondes
-        if(dt > 0 && dt < 10) state.liveDist += spd * dt;
+        if(dt > 0 && dt < 10){ state.liveDist += spd * dt; moved = true; }
       }
       state.prev = cur;                                 // référence tenue à jour
     } else {
@@ -522,32 +548,45 @@
       // seuil lié à la précision ; la référence n'avance qu'au vrai déplacement.
       const step = haversine(state.prev, cur);
       const gate = Math.max(STEP_MIN, (c.accuracy || 0) * 0.6);
-      if(step >= gate){ state.liveDist += step; state.prev = cur; }
+      if(step >= gate){ state.liveDist += step; state.prev = cur; moved = true; }
     }
     state.lastT = now;
 
-    // Garde-fou de plausibilité : sur une vraie route, même en épingle, la
-    // distance parcourue ne peut pas dépasser énormément la distance à vol
-    // d'oiseau depuis l'ancre. Si le rapport explose, c'est du bruit à l'arrêt
-    // — on plafonne pour ne jamais verrouiller un faux segment de 100 m.
+    // Garde-fou de plausibilité : la distance parcourue ne peut pas dépasser
+    // énormément la distance à vol d'oiseau depuis l'ancre (bruit à l'arrêt).
     const crow = haversine(state.anchor, cur);
     const plausible = crow * 4 + 15;
     if(state.liveDist > plausible) state.liveDist = plausible;
 
-    // Dénivelé net depuis l'ancre ; pente = dénivelé / distance parcourue
-    const dz = alt - state.anchor.alt;
-    if(state.liveDist > MIN_D) state.liveSlope = dz / state.liveDist * 100;
+    // Nuage du segment : un point (distance parcourue ; altitude) à chaque
+    // avancée réelle. C'est lui qui alimente la régression.
+    if(moved) state.samples.push({ d:state.liveDist, a:alt });
 
-    // Verrouillage d'un segment tous les 100 m PARCOURUS le long de la route
+    const dz = alt - state.anchor.alt;   // pour la statistique « dénivelé segment »
+
+    // --- Pente du segment par RÉGRESSION linéaire sur tout le nuage ---
+    // Bien plus stable qu'un dénivelé/distance sur deux points. Surtout : on
+    // n'affiche RIEN tant que l'incertitude de la pente reste élevée. C'est ce
+    // qui supprime les valeurs intermédiaires aberrantes (−80 %, etc.) : le
+    // chiffre n'apparaît que lorsqu'il est réellement fiable, puis s'affine.
+    if(state.samples.length >= MIN_SAMPLES && state.liveDist >= SHOW_MIN_D){
+      const fit = segSlope(state.samples);
+      if(fit && fit.se * 100 <= SE_MAX_PCT) state.liveSlope = fit.m * 100;
+    }
+
+    // Verrouillage tous les 100 m PARCOURUS : la valeur verrouillée est la
+    // régression sur l'ensemble du segment (profite de toutes les mesures).
     if(state.liveDist >= TRIGGER){
-      const slope = dz / state.liveDist * 100;
+      const fit = segSlope(state.samples);
+      const slope = fit ? fit.m * 100 : dz / state.liveDist * 100;
       state.cum += state.liveDist;
       state.history.push({ x:state.cum, y:alt });
       state.locked = slope;
       state.anchor = cur;          // nouvelle référence d'altitude
       state.prev   = cur;
       state.liveDist = 0;
-      state.liveSlope = slope;     // on affiche la valeur fraîchement verrouillée
+      state.liveSlope = slope;     // on affiche la valeur verrouillée
+      state.samples = [{ d:0, a:alt }];   // repart pour le segment suivant
       flashLock();
     }
 
@@ -578,7 +617,7 @@
 
     if(s == null){
       numEl.textContent = "—"; arrowEl.textContent = "→";
-      dirEl.textContent = "avancez pour calculer…";
+      dirEl.textContent = "calcul sur 100 m en cours…";
     } else {
       numEl.textContent = (s>=0?"+":"") + s.toFixed(1);
       if(s > 0.5){ arrowEl.textContent="↗"; arrowEl.style.color="var(--amber)"; dirEl.textContent="montée"; }
