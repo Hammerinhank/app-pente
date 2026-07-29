@@ -144,6 +144,36 @@
     color:var(--muted);font-size:13px;font-weight:600;padding:11px;
   }
   .dn-clear:active{background:var(--line)}
+
+  /* Récapitulatif des sections */
+  .sec-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .sec-empty{font-size:13px;color:var(--muted);text-align:center;padding:14px 8px;line-height:1.5}
+  .sec-item{
+    cursor:pointer;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:12px;
+    padding:11px 13px;display:flex;align-items:center;gap:12px;
+    transition:border-color .15s,background .15s;
+  }
+  .sec-item:active{background:var(--line)}
+  .sec-item.sel{border-color:var(--amber);background:var(--amber-dim)}
+  .sec-n{
+    flex:0 0 auto;min-width:34px;height:34px;border-radius:9px;
+    display:inline-flex;align-items:center;justify-content:center;
+    background:var(--surface);border:1px solid var(--line);
+    font-size:12px;font-weight:800;color:var(--muted);
+  }
+  .sec-item.sel .sec-n{background:var(--amber);border-color:var(--amber);color:var(--ink)}
+  .sec-body{flex:1 1 auto;min-width:0}
+  .sec-slope{font-size:17px;font-weight:800;color:var(--text);letter-spacing:-.01em}
+  .sec-meta{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .sec-check{flex:0 0 auto;font-size:12px;font-weight:800;color:var(--amber);width:16px;text-align:center}
+
+  .sec-result{
+    background:var(--surface-2);border:1px solid var(--amber);border-radius:14px;
+    padding:14px 15px;margin-bottom:14px;
+  }
+  .sec-result .r-lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .sec-result .r-val{font-size:30px;font-weight:800;color:var(--amber);letter-spacing:-.02em;margin:4px 0 2px}
+  .sec-result .r-sub{font-size:12.5px;color:var(--muted);line-height:1.5}
   .modal-log{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:11px}
   .modal-log li{position:relative;padding-left:19px;font-size:13.5px;line-height:1.5;color:var(--text)}
   .modal-log li::before{content:"";position:absolute;left:2px;top:7px;width:7px;height:7px;border-radius:50%;background:var(--teal)}
@@ -238,6 +268,10 @@
   <button id="dnOpen" class="toggle2" type="button">
     <span class="ic" aria-hidden="true"></span>
     <span>Méthode 2 points · dénivelé</span>
+  </button>
+  <button id="secOpen" class="toggle2" type="button">
+    <span class="ic" aria-hidden="true"></span>
+    <span>Sections 100 m · récapitulatif</span>
   </button>
 </header>
 
@@ -334,6 +368,21 @@
   </div>
 </div>
 
+<!-- Récapitulatif des sections de 100 m -->
+<div id="secModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="secTitle">
+    <div class="modal-head">
+      <span id="secTitle" class="modal-title">Sections de 100 m</span>
+      <button id="secClose" class="modal-close" type="button" aria-label="Fermer">✕</button>
+    </div>
+    <p class="dn-intro">Chaque section de 100 m verrouillée par la mesure automatique apparaît ici avec sa pente. Touchez <b>deux</b> sections pour obtenir la pente moyenne entre elles (calcul sur toute la portion, extrémités comprises).</p>
+    <div id="secResult" class="sec-result" hidden></div>
+    <div id="secHint" class="dn-hint"></div>
+    <div class="dn-sub">Sections (la plus récente en haut)</div>
+    <ul id="secList" class="sec-list"></ul>
+  </div>
+</div>
+
 <script>
 "use strict";
 (function(){
@@ -354,6 +403,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V7", date:"26 juillet 2026", changes:[
+      "Nouveau bouton « Sections 100 m · récapitulatif » : la liste de toutes les sections de 100 m verrouillées pendant la course, chacune avec sa pente, son dénivelé et l'heure. On touche deux sections quelconques pour obtenir la pente moyenne entre elles, calculée sur toute la portion (extrémités comprises) — c'est plus précis qu'une section isolée, le bruit d'altitude se diluant sur une plus grande distance. La liste repart à zéro à chaque nouveau démarrage de la mesure."
+    ]},
     { v:"V6", date:"26 juillet 2026", changes:[
       "Prise en charge de la marche à pied. Le seuil de mouvement, fixé à 5 km/h en V3 pour ignorer le bruit GPS à l'arrêt, empêchait le compteur d'avancer à allure de marche : il restait bloqué à 0/100 m. Abaissé à ~2 km/h, ce qui capte la marche normale. Le bruit à l'arrêt reste neutralisé par le plafond de plausibilité (distance vs vol d'oiseau depuis l'ancre) et par l'affichage de la pente conditionné à une faible incertitude."
     ]},
@@ -421,6 +473,12 @@
   let active = false, watchId = null, wakeLock = null;
   let state = null;
 
+  // Récapitulatif des sections de 100 m verrouillées pendant la course en cours.
+  // Chaque entrée : bornes de distance/altitude + pente régressée. Alimente la
+  // fenêtre « Sections » (3e bouton). Remis à zéro à chaque nouveau démarrage.
+  const sectionLog = [];
+  let notifySection = null;   // renseigné par le module Sections pour un rafraîchissement live
+
   function freshState(){
     return {
       anchor:null,      // point de référence d'altitude {lat,lon,alt}
@@ -474,6 +532,8 @@
     }
     active = true;
     state = freshState();
+    sectionLog.length = 0;                 // nouvelle course → récapitulatif vierge
+    if(notifySection) notifySection();
     toggle.dataset.on = "true";
     toggle.setAttribute("aria-pressed","true");
     toggleLabel.textContent = "Arrêter la mesure";
@@ -582,9 +642,12 @@
     if(state.liveDist >= TRIGGER){
       const fit = segSlope(state.samples);
       const slope = fit ? fit.m * 100 : dz / state.liveDist * 100;
-      state.cum += state.liveDist;
+      const d0 = state.cum, a0 = state.anchor.alt;   // bornes de début de la section
+      state.cum += state.liveDist;                    // bornes de fin
       state.history.push({ x:state.cum, y:alt });
       state.locked = slope;
+      sectionLog.push({ n:sectionLog.length + 1, d0, a0, d1:state.cum, a1:alt, slope, t:Date.now() });
+      if(notifySection) notifySection();
       state.anchor = cur;          // nouvelle référence d'altitude
       state.prev   = cur;
       state.liveDist = 0;
@@ -917,6 +980,106 @@
     clearBtn.addEventListener("click", () => { results.length = 0; render(); });
 
     resetCapture();
+    render();
+  })();
+
+  // ============================================================
+  //  RÉCAPITULATIF DES SECTIONS DE 100 m.
+  //  Lit sectionLog (rempli au verrouillage de chaque segment) et
+  //  permet de sélectionner deux sections pour obtenir la pente
+  //  moyenne entre elles, calculée sur toute la portion (extrémités
+  //  comprises) — plus précise qu'une section isolée car le bruit
+  //  d'altitude se dilue sur une plus grande distance.
+  // ============================================================
+  (function(){
+    const openBtn  = $("secOpen"), modal = $("secModal"), closeBtn = $("secClose");
+    const listEl   = $("secList"), resultEl = $("secResult"), hintEl = $("secHint");
+
+    let selected = [];   // sections choisies (max 2), dans l'ordre du toucher
+
+    function open(){ selected = []; render(); modal.hidden = false; }
+    function close(){ modal.hidden = true; }
+    openBtn.addEventListener("click", open);
+    closeBtn.addEventListener("click", close);
+    modal.addEventListener("click", e => { if(e.target === modal) close(); });
+    document.addEventListener("keydown", e => { if(e.key === "Escape" && !modal.hidden) close(); });
+
+    // Rafraîchissement live si une section se verrouille pendant que la fenêtre est ouverte
+    notifySection = () => { if(!modal.hidden) render(); };
+
+    function toggle(sec){
+      const i = selected.indexOf(sec);
+      if(i >= 0) selected.splice(i, 1);
+      else { selected.push(sec); if(selected.length > 2) selected.shift(); }
+      render();
+    }
+
+    function between(){
+      if(selected.length !== 2) return null;
+      const pair = selected.slice().sort((a, b) => a.d0 - b.d0);
+      const A = pair[0], B = pair[1];
+      const dz = B.a1 - A.a0;
+      const dd = B.d1 - A.d0;
+      return { A, B, dz, dd, slope: dd > 0 ? dz / dd * 100 : null };
+    }
+
+    function render(){
+      // Résultat « entre deux sections »
+      const r = between();
+      if(r){
+        const slopeTxt = r.slope == null ? "—" : (r.slope >= 0 ? "+" : "") + r.slope.toFixed(1) + " %";
+        const dzTxt    = (r.dz >= 0 ? "+" : "") + r.dz.toFixed(1) + " m";
+        const nSec     = Math.abs(r.B.n - r.A.n) + 1;
+        resultEl.innerHTML =
+          '<div class="r-lbl">Pente moyenne — section ' + r.A.n + ' → section ' + r.B.n + '</div>' +
+          '<div class="r-val">' + slopeTxt + '</div>' +
+          '<div class="r-sub">dénivelé ' + dzTxt + ' · distance ' + Math.round(r.dd) + ' m · ' + nSec + ' sections</div>';
+        resultEl.hidden = false;
+        hintEl.textContent = "";
+      } else {
+        resultEl.hidden = true;
+        hintEl.textContent = selected.length === 1
+          ? "Touchez une seconde section."
+          : "Touchez deux sections pour obtenir la pente moyenne entre elles.";
+      }
+
+      // Liste des sections (la plus récente en haut)
+      listEl.innerHTML = "";
+      if(sectionLog.length === 0){
+        const li = document.createElement("li");
+        li.className = "sec-empty";
+        li.textContent = "Aucune section pour l'instant. Lancez la mesure et parcourez au moins 100 m.";
+        listEl.appendChild(li);
+        hintEl.textContent = "";
+        return;
+      }
+      for(let k = sectionLog.length - 1; k >= 0; k--){
+        const sec = sectionLog[k];
+        const li = document.createElement("li");
+        li.className = "sec-item" + (selected.indexOf(sec) >= 0 ? " sel" : "");
+
+        const nEl = document.createElement("span");
+        nEl.className = "sec-n"; nEl.textContent = sec.n;
+
+        const body = document.createElement("div"); body.className = "sec-body";
+        const slopeEl = document.createElement("div"); slopeEl.className = "sec-slope";
+        slopeEl.textContent = (sec.slope >= 0 ? "+" : "") + sec.slope.toFixed(1) + " %";
+        const metaEl = document.createElement("div"); metaEl.className = "sec-meta";
+        const secDz = sec.a1 - sec.a0;
+        const time = new Date(sec.t).toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+        metaEl.textContent = "dénivelé " + (secDz >= 0 ? "+" : "") + secDz.toFixed(1) + " m · "
+                           + Math.round(sec.d1 - sec.d0) + " m · " + time;
+        body.appendChild(slopeEl); body.appendChild(metaEl);
+
+        const check = document.createElement("span");
+        check.className = "sec-check"; check.textContent = selected.indexOf(sec) >= 0 ? "✓" : "";
+
+        li.appendChild(nEl); li.appendChild(body); li.appendChild(check);
+        li.addEventListener("click", () => toggle(sec));
+        listEl.appendChild(li);
+      }
+    }
+
     render();
   })();
 
