@@ -174,6 +174,9 @@
   .sec-result .r-lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
   .sec-result .r-val{font-size:30px;font-weight:800;color:var(--amber);letter-spacing:-.02em;margin:4px 0 2px}
   .sec-result .r-sub{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .sec-sep{list-style:none;margin:8px 0 4px;padding:11px 0 5px;border-top:1px dashed var(--line);text-align:center}
+  .sec-sep-badge{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber);font-weight:800;margin-bottom:5px}
+  .sec-sep-txt{font-size:11px;color:var(--muted);line-height:1.6}
   .modal-log{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:11px}
   .modal-log li{position:relative;padding-left:19px;font-size:13.5px;line-height:1.5;color:var(--text)}
   .modal-log li::before{content:"";position:absolute;left:2px;top:7px;width:7px;height:7px;border-radius:50%;background:var(--teal)}
@@ -380,6 +383,7 @@
     <div id="secHint" class="dn-hint"></div>
     <div class="dn-sub">Sections (la plus récente en haut)</div>
     <ul id="secList" class="sec-list"></ul>
+    <button id="secClear" class="dn-clear" type="button" hidden>Effacer l'historique</button>
   </div>
 </div>
 
@@ -403,6 +407,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V8", date:"26 juillet 2026", changes:[
+      "Récapitulatif des sections désormais persistant : conservé d'une session à l'autre (localStorage), il survit à la fermeture de l'app. À chaque nouveau démarrage de la mesure, un séparateur daté est inséré dans la liste (fin de la série précédente / début de la suivante). Le calcul « pente entre deux sections » est limité aux sections d'une même série. Nouveau bouton « Effacer l'historique » (confirmation en deux temps)."
+    ]},
     { v:"V7", date:"26 juillet 2026", changes:[
       "Nouveau bouton « Sections 100 m · récapitulatif » : la liste de toutes les sections de 100 m verrouillées pendant la course, chacune avec sa pente, son dénivelé et l'heure. On touche deux sections quelconques pour obtenir la pente moyenne entre elles, calculée sur toute la portion (extrémités comprises) — c'est plus précis qu'une section isolée, le bruit d'altitude se diluant sur une plus grande distance. La liste repart à zéro à chaque nouveau démarrage de la mesure."
     ]},
@@ -473,11 +480,48 @@
   let active = false, watchId = null, wakeLock = null;
   let state = null;
 
-  // Récapitulatif des sections de 100 m verrouillées pendant la course en cours.
-  // Chaque entrée : bornes de distance/altitude + pente régressée. Alimente la
-  // fenêtre « Sections » (3e bouton). Remis à zéro à chaque nouveau démarrage.
-  const sectionLog = [];
+  // Récapitulatif PERSISTANT des sections de 100 m (localStorage). Chaque entrée
+  // est soit une section {n,d0,a0,d1,a1,slope,t,s}, soit un séparateur de série
+  // {sep:true,prevEnd,nextStart}. Conservé d'une session à l'autre ; chaque
+  // nouveau démarrage de la mesure ouvre une « série » précédée d'un séparateur
+  // daté (fin de la série précédente / début de la suivante).
+  const SEC_STORE = "pente.sections.v1";
+  const sectionLog = loadSections();
   let notifySection = null;   // renseigné par le module Sections pour un rafraîchissement live
+  let curSeries   = lastSeriesId(sectionLog);
+  let seriesStart = 0;
+  let seriesArmed = false;    // un séparateur est-il à insérer avant la 1re section de la série ?
+  let runCount    = 0;        // n° de section dans la série en cours
+
+  function loadSections(){
+    try{ const a = JSON.parse(localStorage.getItem(SEC_STORE) || "[]"); return Array.isArray(a) ? a : []; }
+    catch(e){ return []; }
+  }
+  function persistSections(){
+    try{ localStorage.setItem(SEC_STORE, JSON.stringify(sectionLog)); }catch(e){}
+  }
+  function lastSeriesId(list){ let m=0; for(const e of list){ if(!e.sep && e.s > m) m = e.s; } return m; }
+  function lastSectionTime(list){ for(let i=list.length-1;i>=0;i--){ if(!list[i].sep) return list[i].t; } return null; }
+
+  function beginSeries(){
+    // Nouvelle course : on n'efface rien. On ouvre une série ; un séparateur
+    // daté sera inséré juste avant sa première section, s'il existe déjà des
+    // sections antérieures.
+    curSeries  += 1;
+    seriesStart = Date.now();
+    runCount    = 0;
+    seriesArmed = sectionLog.some(e => !e.sep);
+  }
+  function recordSection(d0, a0, d1, a1, slope){
+    if(seriesArmed){
+      sectionLog.push({ sep:true, prevEnd:lastSectionTime(sectionLog), nextStart:seriesStart });
+      seriesArmed = false;
+    }
+    runCount += 1;
+    sectionLog.push({ n:runCount, d0, a0, d1, a1, slope, t:Date.now(), s:curSeries });
+    persistSections();
+    if(notifySection) notifySection();
+  }
 
   function freshState(){
     return {
@@ -532,7 +576,7 @@
     }
     active = true;
     state = freshState();
-    sectionLog.length = 0;                 // nouvelle course → récapitulatif vierge
+    beginSeries();                         // nouvelle course → nouvelle série (récap conservé)
     if(notifySection) notifySection();
     toggle.dataset.on = "true";
     toggle.setAttribute("aria-pressed","true");
@@ -646,8 +690,7 @@
       state.cum += state.liveDist;                    // bornes de fin
       state.history.push({ x:state.cum, y:alt });
       state.locked = slope;
-      sectionLog.push({ n:sectionLog.length + 1, d0, a0, d1:state.cum, a1:alt, slope, t:Date.now() });
-      if(notifySection) notifySection();
+      recordSection(d0, a0, state.cum, alt, slope);
       state.anchor = cur;          // nouvelle référence d'altitude
       state.prev   = cur;
       state.liveDist = 0;
@@ -993,7 +1036,7 @@
   // ============================================================
   (function(){
     const openBtn  = $("secOpen"), modal = $("secModal"), closeBtn = $("secClose");
-    const listEl   = $("secList"), resultEl = $("secResult"), hintEl = $("secHint");
+    const listEl   = $("secList"), resultEl = $("secResult"), hintEl = $("secHint"), secClear = $("secClear");
 
     let selected = [];   // sections choisies (max 2), dans l'ordre du toucher
 
@@ -1014,8 +1057,13 @@
       render();
     }
 
+    function fmtDate(t){
+      return t ? new Date(t).toLocaleString("fr-FR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : "—";
+    }
+
     function between(){
       if(selected.length !== 2) return null;
+      if(selected[0].s !== selected[1].s) return { crossSeries:true };
       const pair = selected.slice().sort((a, b) => a.d0 - b.d0);
       const A = pair[0], B = pair[1];
       const dz = B.a1 - A.a0;
@@ -1026,7 +1074,10 @@
     function render(){
       // Résultat « entre deux sections »
       const r = between();
-      if(r){
+      if(r && r.crossSeries){
+        resultEl.hidden = true;
+        hintEl.textContent = "Les deux sections doivent appartenir à la même série.";
+      } else if(r){
         const slopeTxt = r.slope == null ? "—" : (r.slope >= 0 ? "+" : "") + r.slope.toFixed(1) + " %";
         const dzTxt    = (r.dz >= 0 ? "+" : "") + r.dz.toFixed(1) + " m";
         const nSec     = Math.abs(r.B.n - r.A.n) + 1;
@@ -1039,46 +1090,76 @@
       } else {
         resultEl.hidden = true;
         hintEl.textContent = selected.length === 1
-          ? "Touchez une seconde section."
+          ? "Touchez une seconde section (même série)."
           : "Touchez deux sections pour obtenir la pente moyenne entre elles.";
       }
 
-      // Liste des sections (la plus récente en haut)
+      // Liste (la plus récente en haut) : sections + séparateurs de série
       listEl.innerHTML = "";
-      if(sectionLog.length === 0){
+      const hasSections = sectionLog.some(e => !e.sep);
+      secClear.hidden = !hasSections;
+      if(!hasSections){
         const li = document.createElement("li");
         li.className = "sec-empty";
         li.textContent = "Aucune section pour l'instant. Lancez la mesure et parcourez au moins 100 m.";
         listEl.appendChild(li);
         hintEl.textContent = "";
+        resultEl.hidden = true;
         return;
       }
       for(let k = sectionLog.length - 1; k >= 0; k--){
-        const sec = sectionLog[k];
+        const e = sectionLog[k];
+
+        if(e.sep){
+          const li = document.createElement("li");
+          li.className = "sec-sep";
+          li.innerHTML =
+            '<div class="sec-sep-badge">Nouvelle série</div>' +
+            '<div class="sec-sep-txt">Fin de la précédente : ' + fmtDate(e.prevEnd) +
+            '<br>Début de la suivante : ' + fmtDate(e.nextStart) + '</div>';
+          listEl.appendChild(li);
+          continue;
+        }
+
         const li = document.createElement("li");
-        li.className = "sec-item" + (selected.indexOf(sec) >= 0 ? " sel" : "");
+        li.className = "sec-item" + (selected.indexOf(e) >= 0 ? " sel" : "");
 
         const nEl = document.createElement("span");
-        nEl.className = "sec-n"; nEl.textContent = sec.n;
+        nEl.className = "sec-n"; nEl.textContent = e.n;
 
         const body = document.createElement("div"); body.className = "sec-body";
         const slopeEl = document.createElement("div"); slopeEl.className = "sec-slope";
-        slopeEl.textContent = (sec.slope >= 0 ? "+" : "") + sec.slope.toFixed(1) + " %";
+        slopeEl.textContent = (e.slope >= 0 ? "+" : "") + e.slope.toFixed(1) + " %";
         const metaEl = document.createElement("div"); metaEl.className = "sec-meta";
-        const secDz = sec.a1 - sec.a0;
-        const time = new Date(sec.t).toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+        const secDz = e.a1 - e.a0;
         metaEl.textContent = "dénivelé " + (secDz >= 0 ? "+" : "") + secDz.toFixed(1) + " m · "
-                           + Math.round(sec.d1 - sec.d0) + " m · " + time;
+                           + Math.round(e.d1 - e.d0) + " m · " + fmtDate(e.t);
         body.appendChild(slopeEl); body.appendChild(metaEl);
 
         const check = document.createElement("span");
-        check.className = "sec-check"; check.textContent = selected.indexOf(sec) >= 0 ? "✓" : "";
+        check.className = "sec-check"; check.textContent = selected.indexOf(e) >= 0 ? "✓" : "";
 
         li.appendChild(nEl); li.appendChild(body); li.appendChild(check);
-        li.addEventListener("click", () => toggle(sec));
+        li.addEventListener("click", () => toggle(e));
         listEl.appendChild(li);
       }
     }
+
+    // Effacement de tout l'historique persistant (confirmation en deux temps)
+    let clearArmed = false, clearTimer = null;
+    secClear.addEventListener("click", () => {
+      if(!clearArmed){
+        clearArmed = true;
+        secClear.textContent = "Confirmer l'effacement de tout l'historique ?";
+        clearTimer = setTimeout(() => { clearArmed = false; secClear.textContent = "Effacer l'historique"; }, 3500);
+        return;
+      }
+      clearTimeout(clearTimer); clearArmed = false;
+      secClear.textContent = "Effacer l'historique";
+      sectionLog.length = 0; curSeries = 0; persistSections();
+      selected = [];
+      render();
+    });
 
     render();
   })();
