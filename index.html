@@ -244,6 +244,7 @@
   .chart-head .eyebrow{margin:0}
   .legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
   .swatch{width:14px;height:3px;border-radius:2px}
+  .swatch.dot{width:8px;height:8px;border-radius:50%}
   canvas{display:block;width:100%;border-radius:8px}
   #histChart{height:132px}
   #zoomChart{height:196px}
@@ -323,7 +324,10 @@
     <div class="card chart">
       <div class="chart-head">
         <span class="eyebrow">Historique du relief</span>
-        <span class="legend"><span class="swatch" style="background:var(--teal)"></span>Altitude</span>
+        <span style="display:flex;gap:12px">
+          <span class="legend"><span class="swatch" style="background:var(--teal)"></span>Altitude</span>
+          <span class="legend"><span class="swatch dot" style="background:var(--danger)"></span>Moy. 2 min</span>
+        </span>
       </div>
       <canvas id="histChart"></canvas>
     </div>
@@ -407,6 +411,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V9", date:"8 août 2026", changes:[
+      "Nouveau point rouge sur le graphique « Historique du relief » : toutes les 2 minutes, la moyenne des relevés d'altitude de la fenêtre écoulée est calculée (les valeurs aberrantes — trop éloignées de la moyenne brute — sont écartées avant le calcul final) et vient s'ajouter au tracé déjà continu, sans jamais l'interrompre ni le remplacer."
+    ]},
     { v:"V8", date:"26 juillet 2026", changes:[
       "Récapitulatif des sections désormais persistant : conservé d'une session à l'autre (localStorage), il survit à la fermeture de l'app. À chaque nouveau démarrage de la mesure, un séparateur daté est inséré dans la liste (fin de la série précédente / début de la suivante). Le calcul « pente entre deux sections » est limité aux sections d'une même série. Nouveau bouton « Effacer l'historique » (confirmation en deux temps)."
     ]},
@@ -476,6 +483,8 @@
   const STEP_MIN= 5;     // pas mini (m) entre deux fixes retenus (repli, si vitesse absente)
   const SPEED_MIN=0.6;   // vitesse GPS mini (m/s ≈ 2 km/h) : capte la marche ; sous ce seuil = à l'arrêt
   const EMA     = 0.35;  // lissage léger de l'altitude
+  const AVG_WINDOW_MS = 120000; // fenêtre de la moyenne d'altitude « point rouge » (2 min)
+  const AVG_OUTLIER_K = 2;      // écarte les relevés à plus de K écarts-types de la moyenne brute
 
   let active = false, watchId = null, wakeLock = null;
   let state = null;
@@ -535,6 +544,9 @@
       liveSlope:null,   // pente du segment en cours (%), issue de la régression
       locked:null,      // dernière pente verrouillée (%)
       history:[],       // [{x:distanceCumulée, y:altitude}]
+      avgWindowStart:null,  // horodatage de début de la fenêtre de 2 min en cours
+      avgWindowSamples:[],  // relevés {t, alt, x} de la fenêtre en cours
+      avgPoints:[],          // points rouges déjà calculés : [{x, y}]
     };
   }
 
@@ -564,6 +576,27 @@
     const sigma2 = rss / (n - 2);                  // variance résiduelle (bruit d'altitude estimé)
     const se  = Math.sqrt(sigma2 / Sxx);           // erreur-type de la pente (m/m)
     return { m, se };
+  }
+
+  // Moyenne d'altitude d'une fenêtre, valeurs aberrantes écartées. On calcule
+  // d'abord la moyenne et l'écart-type bruts, puis on ne retient que les
+  // relevés à moins de AVG_OUTLIER_K écarts-types de cette moyenne, avant de
+  // recalculer la moyenne finale (altitude ET position) sur ce sous-ensemble.
+  function windowAverage(samples){
+    const n = samples.length;
+    if(n === 0) return null;
+    if(n === 1) return { x: samples[0].x, y: samples[0].alt };
+    let sum = 0; for(const s of samples) sum += s.alt;
+    const mean = sum / n;
+    let ss = 0; for(const s of samples) ss += (s.alt - mean) * (s.alt - mean);
+    const sd = Math.sqrt(ss / n);
+    let kept = samples;
+    if(sd > 0.001){
+      const filtered = samples.filter(s => Math.abs(s.alt - mean) <= AVG_OUTLIER_K * sd);
+      if(filtered.length > 0) kept = filtered;
+    }
+    let sx=0, sy=0; for(const s of kept){ sx += s.x; sy += s.alt; }
+    return { x: sx/kept.length, y: sy/kept.length };
   }
 
   // ---- Activation / désactivation ----
@@ -631,6 +664,8 @@
       state.prev   = cur;
       state.history = [{ x:0, y:alt }];
       state.samples = [{ d:0, a:alt }];
+      state.avgWindowStart = Date.now();
+      state.avgWindowSamples = [{ t:state.avgWindowStart, alt, x:0 }];
       draw();
       return;
     }
@@ -697,6 +732,25 @@
       state.liveSlope = slope;     // on affiche la valeur verrouillée
       state.samples = [{ d:0, a:alt }];   // repart pour le segment suivant
       flashLock();
+    }
+
+    // --- Point rouge « moyenne 2 min » ---
+    // On accumule chaque relevé d'altitude (avec sa position sur l'axe du
+    // graphique) dans la fenêtre en cours. Une fois les 2 minutes écoulées, on
+    // calcule la moyenne (valeurs aberrantes écartées), on l'ajoute au tracé
+    // existant sans jamais l'interrompre, puis on repart pour une nouvelle
+    // fenêtre.
+    const curX = state.cum + state.liveDist;
+    if(state.avgWindowStart == null){
+      state.avgWindowStart = now;
+      state.avgWindowSamples = [];
+    }
+    state.avgWindowSamples.push({ t:now, alt, x:curX });
+    if(now - state.avgWindowStart >= AVG_WINDOW_MS){
+      const avg = windowAverage(state.avgWindowSamples);
+      if(avg) state.avgPoints.push(avg);
+      state.avgWindowStart = now;
+      state.avgWindowSamples = [{ t:now, alt, x:curX }];
     }
 
     render(dz);
@@ -803,8 +857,9 @@
       return;
     }
     const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+    const avgPts = state.avgPoints || [];
     let xmin=Math.min(...xs), xmax=Math.max(...xs);
-    let ymin=Math.min(...ys), ymax=Math.max(...ys);
+    let ymin=Math.min(...ys, ...avgPts.map(p=>p.y)), ymax=Math.max(...ys, ...avgPts.map(p=>p.y));
     if(xmax-xmin < 1) xmax = xmin+1;
     const py = Math.max(2, (ymax-ymin)*0.15); ymin-=py; ymax+=py;
     if(ymax-ymin < 2){ const m=(ymin+ymax)/2; ymin=m-1; ymax=m+1; }
@@ -825,7 +880,7 @@
     hc.lineTo(X(pts[pts.length-1].x), h-pad.b); hc.lineTo(X(pts[0].x), h-pad.b); hc.closePath();
     hc.fillStyle = grad; hc.fill();
 
-    // Ligne
+    // Ligne (tracé continu, jamais interrompu par les points rouges)
     hc.beginPath(); hc.moveTo(X(pts[0].x), Y(pts[0].y));
     for(const p of pts) hc.lineTo(X(p.x), Y(p.y));
     hc.strokeStyle = css("--teal"); hc.lineWidth=2; hc.lineJoin="round"; hc.stroke();
@@ -834,6 +889,20 @@
     const last = pts[pts.length-1];
     hc.fillStyle = css("--amber");
     hc.beginPath(); hc.arc(X(last.x), Y(last.y), 3.2, 0, Math.PI*2); hc.fill();
+
+    // Points rouges : moyenne d'altitude par fenêtre de 2 min (valeurs
+    // aberrantes déjà écartées dans windowAverage). Superposés au tracé,
+    // taille modeste pour rester lisibles sans dominer le graphique.
+    if(avgPts.length){
+      hc.fillStyle = css("--danger");
+      hc.strokeStyle = css("--surface");
+      hc.lineWidth = 1.2;
+      for(const p of avgPts){
+        hc.beginPath();
+        hc.arc(X(p.x), Y(p.y), 4.5, 0, Math.PI*2);
+        hc.fill(); hc.stroke();
+      }
+    }
 
     // Repères min / max altitude
     hc.fillStyle = css("--muted"); hc.font="10px ui-monospace,monospace";
