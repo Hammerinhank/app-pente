@@ -174,6 +174,18 @@
   .sec-result .r-lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
   .sec-result .r-val{font-size:30px;font-weight:800;color:var(--amber);letter-spacing:-.02em;margin:4px 0 2px}
   .sec-result .r-sub{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .sec-accordion-header{
+    appearance:none;cursor:pointer;width:100%;font-family:inherit;
+    border:1px solid var(--line);border-radius:12px;background:var(--surface-2);
+    color:var(--text);font-size:14px;font-weight:700;letter-spacing:.02em;
+    padding:12px 15px;margin-top:12px;
+    display:flex;align-items:center;justify-content:space-between;
+    transition:border-color .15s,background .15s;
+  }
+  .sec-accordion-header:active{background:var(--line)}
+  .sec-accordion-header .chev{color:var(--muted);font-size:12px;transition:transform .18s}
+  .sec-accordion-header[aria-expanded="true"]{border-color:var(--amber);background:var(--amber-dim);color:var(--amber)}
+  .sec-accordion-header[aria-expanded="true"] .chev{transform:rotate(180deg);color:var(--amber)}
   .sec-graph-controls{display:flex;gap:10px;align-items:center}
   .sec-graph-select{
     flex:1 1 auto;appearance:none;font-family:inherit;font-size:13.5px;font-weight:600;
@@ -397,22 +409,27 @@
       <span id="secTitle" class="modal-title">Sections de 100 m</span>
       <button id="secClose" class="modal-close" type="button" aria-label="Fermer">✕</button>
     </div>
-    <p class="dn-intro">Chaque section de 100 m verrouillée par la mesure automatique apparaît ici avec sa pente. Touchez <b>deux</b> sections pour obtenir la pente moyenne entre elles (calcul sur toute la portion, extrémités comprises).</p>
+    <p class="dn-intro">Chaque section de 100 m verrouillée par la mesure automatique apparaît ici avec sa pente. Choisissez une série ci-dessous (ou « Toutes les séries »), puis dépliez « Graphique » et/ou « Sections ». Dans la liste, touchez <b>deux</b> sections pour obtenir la pente moyenne entre elles.</p>
+
+    <div class="dn-sub">Série</div>
+    <select id="secSeriesSelect" class="sec-graph-select"></select>
+
     <div id="secResult" class="sec-result" hidden></div>
     <div id="secHint" class="dn-hint"></div>
 
-    <div class="dn-sub">Courbe d'altitude par section</div>
-    <div class="sec-graph-controls">
-      <select id="secGraphSelect" class="sec-graph-select"></select>
-      <button id="secGraphToggle" class="sec-graph-toggle" type="button">Afficher</button>
-    </div>
+    <button id="secGraphHeader" class="sec-accordion-header" type="button" aria-expanded="false">
+      <span>Graphique</span><span class="chev">▾</span>
+    </button>
     <div id="secGraphPanel" class="sec-graph-panel" hidden>
       <div id="secGraphInfo" class="sec-graph-info"></div>
       <canvas id="secGraphCanvas"></canvas>
     </div>
 
-    <div class="dn-sub">Sections (la plus récente en haut)</div>
-    <ul id="secList" class="sec-list"></ul>
+    <button id="secListHeader" class="sec-accordion-header" type="button" aria-expanded="false">
+      <span>Sections</span><span class="chev">▾</span>
+    </button>
+    <ul id="secList" class="sec-list" hidden></ul>
+
     <button id="secClear" class="dn-clear" type="button" hidden>Effacer l'historique</button>
   </div>
 </div>
@@ -437,6 +454,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V11", date:"8 août 2026", changes:[
+      "Correction du récapitulatif des sections : la combo sélectionne désormais une SÉRIE entière (identifiée par sa date de début et son nombre de sections, comme dans les séparateurs de la liste) plutôt qu'une section isolée, avec une option « Toutes les séries ». Deux titres indépendants et repliés par défaut, « Graphique » et « Sections » : le premier déplie la courbe d'altitude de toutes les sections de la sélection (enchaînées chronologiquement), le second déplie leur liste détaillée. Choisir « Toutes les séries » fait porter le graphique et la liste sur l'ensemble des sections, toutes séries confondues."
+    ]},
     { v:"V10", date:"8 août 2026", changes:[
       "Dans « Sections 100 m · récapitulatif » : nouvelle combo listant toutes les sections (+ option « Toutes les sections »), avec un bouton Afficher/Masquer pour un panneau de détail replié par défaut. Ce panneau affiche désormais un graphique de la courbe d'altitude — soit celle de la section choisie (relevés réels du segment, pas seulement ses deux extrémités), soit celle de toutes les sections enchaînées chronologiquement. Chaque section verrouillée stocke maintenant son nuage de relevés pour permettre ce tracé."
     ]},
@@ -1130,23 +1150,35 @@
 
   // ============================================================
   //  RÉCAPITULATIF DES SECTIONS DE 100 m.
-  //  Lit sectionLog (rempli au verrouillage de chaque segment) et
-  //  permet de sélectionner deux sections pour obtenir la pente
-  //  moyenne entre elles, calculée sur toute la portion (extrémités
-  //  comprises) — plus précise qu'une section isolée car le bruit
-  //  d'altitude se dilue sur une plus grande distance.
+  //  La combo sélectionne une SÉRIE (identifiée par sa date de début et
+  //  son nombre de sections, comme dans les séparateurs de la liste) ou
+  //  « Toutes les séries ». Deux accordéons indépendants, repliés par
+  //  défaut : « Graphique » (courbe d'altitude de toutes les sections de
+  //  la sélection, enchaînées chronologiquement) et « Sections » (liste
+  //  détaillée). Dans la liste, on touche deux sections pour obtenir la
+  //  pente moyenne entre elles (calculée sur toute la portion).
   // ============================================================
   (function(){
     const openBtn  = $("secOpen"), modal = $("secModal"), closeBtn = $("secClose");
     const listEl   = $("secList"), resultEl = $("secResult"), hintEl = $("secHint"), secClear = $("secClear");
-    const graphSelect = $("secGraphSelect"), graphToggle = $("secGraphToggle");
-    const graphPanel  = $("secGraphPanel"), graphInfo = $("secGraphInfo");
+    const seriesSelect = $("secSeriesSelect");
+    const graphHeader = $("secGraphHeader"), graphPanel = $("secGraphPanel"), graphInfo = $("secGraphInfo");
+    const listHeader  = $("secListHeader");
     const graphCanvas = $("secGraphCanvas"), gc = graphCanvas.getContext("2d");
 
-    let selected = [];   // sections choisies (max 2), dans l'ordre du toucher
+    let selected = [];      // sections choisies (max 2), dans l'ordre du toucher
     let graphOpen = false;
+    let listOpen  = false;
 
-    function open(){ selected = []; render(); modal.hidden = false; }
+    function open(){
+      selected = [];
+      graphOpen = false; listOpen = false;
+      graphPanel.hidden = true; listEl.hidden = true;
+      graphHeader.setAttribute("aria-expanded","false");
+      listHeader.setAttribute("aria-expanded","false");
+      render();
+      modal.hidden = false;
+    }
     function close(){ modal.hidden = true; }
     openBtn.addEventListener("click", open);
     closeBtn.addEventListener("click", close);
@@ -1177,24 +1209,51 @@
       return { A, B, dz, dd, slope: dd > 0 ? dz / dd * 100 : null };
     }
 
-    // ---- Sélecteur de section + graphique d'altitude ----
-    function populateGraphSelect(){
-      const prevVal = graphSelect.value;
-      graphSelect.innerHTML = "";
-      const optAll = document.createElement("option");
-      optAll.value = "all"; optAll.textContent = "Toutes les sections";
-      graphSelect.appendChild(optAll);
-      const secs = sectionLog.filter(e => !e.sep);
-      secs.forEach(e => {
-        const opt = document.createElement("option");
-        opt.value = e.n + "|" + e.s;
-        opt.textContent = "Section " + e.n + " · " + fmtDate(e.t);
-        graphSelect.appendChild(opt);
+    // ---- Séries : identifiées par leur date de début + nb de sections,
+    // exactement les informations déjà affichées aux séparateurs de la liste.
+    function buildSeriesMeta(){
+      const map = new Map();
+      sectionLog.forEach(e => {
+        if(e.sep) return;
+        if(!map.has(e.s)) map.set(e.s, { id:e.s, first:e.t, last:e.t, count:0 });
+        const m = map.get(e.s);
+        if(e.t < m.first) m.first = e.t;
+        if(e.t > m.last)  m.last  = e.t;
+        m.count++;
       });
-      const values = Array.from(graphSelect.options).map(o => o.value);
-      graphSelect.value = values.includes(prevVal) ? prevVal : "all";
+      return Array.from(map.values()).sort((a,b) => b.first - a.first); // plus récente d'abord
     }
 
+    function populateSeriesSelect(){
+      const prevVal = seriesSelect.value;
+      seriesSelect.innerHTML = "";
+      const optAll = document.createElement("option");
+      optAll.value = "all"; optAll.textContent = "Toutes les séries";
+      seriesSelect.appendChild(optAll);
+      const metas = buildSeriesMeta();
+      metas.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = String(m.id);
+        opt.textContent = "Série du " + fmtDate(m.first) + " · " + m.count + " section" + (m.count>1?"s":"");
+        seriesSelect.appendChild(opt);
+      });
+      const values = Array.from(seriesSelect.options).map(o => o.value);
+      if(values.includes(prevVal)) seriesSelect.value = prevVal;
+      else seriesSelect.value = metas.length ? String(metas[0].id) : "all";
+    }
+
+    function filteredSections(){
+      const secs = sectionLog.filter(e => !e.sep);
+      const val = seriesSelect.value;
+      if(val === "all") return secs;
+      const id = parseInt(val, 10);
+      return secs.filter(e => e.s === id);
+    }
+
+    seriesSelect.addEventListener("change", () => { selected = []; render(); });
+
+    // ---- Graphique : courbe d'altitude de toutes les sections de la
+    // sélection (une série, ou toutes), enchaînées chronologiquement.
     function sizeGraphCanvas(){
       const dpr = Math.min(window.devicePixelRatio||1, 3);
       const r = graphCanvas.getBoundingClientRect();
@@ -1204,39 +1263,19 @@
       return { w:r.width, h:r.height };
     }
 
-    // Reconstruit les points à tracer selon la sélection : soit le nuage
-    // complet d'une section (distance locale 0 → longueur), soit toutes les
-    // sections enchaînées chronologiquement (chaque section reprend à la
-    // suite de la précédente sur l'axe, pour rester lisible même si les
-    // distances GPS réelles se chevauchent d'une série à l'autre).
     function buildGraphPoints(){
-      const val = graphSelect.value;
-      const secs = sectionLog.filter(e => !e.sep);
-      if(!secs.length) return { pts:[], info:"Aucune section enregistrée pour l'instant." };
-
+      const secs = filteredSections();
+      if(!secs.length) return { pts:[], info:"Aucune section pour cette sélection." };
       const ptsOf = e => (e.pts && e.pts.length) ? e.pts : [{ d:0, a:e.a0 }, { d:e.d1-e.d0, a:e.a1 }];
-
-      if(val === "all"){
-        const ordered = secs.slice().sort((a,b) => a.t - b.t);
-        let offset = 0, pts = [], totalDist = 0, totalDz = 0;
-        ordered.forEach(e => {
-          ptsOf(e).forEach(p => pts.push({ x: offset + p.d, y: p.a }));
-          const len = e.d1 - e.d0;
-          offset += len; totalDist += len; totalDz += (e.a1 - e.a0);
-        });
-        return { pts, info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
-          Math.round(totalDist) + " m · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
-      }
-
-      const [nStr, sStr] = val.split("|");
-      const n = parseInt(nStr,10), s = parseInt(sStr,10);
-      const e = secs.find(x => x.n === n && x.s === s);
-      if(!e) return { pts:[], info:"Section introuvable." };
-      const pts = ptsOf(e).map(p => ({ x:p.d, y:p.a }));
-      const dz = e.a1 - e.a0;
-      return { pts, info: "Section " + e.n + " · " + fmtDate(e.t) + " · pente " +
-        (e.slope>=0?"+":"") + e.slope.toFixed(1) + " % · dénivelé " + (dz>=0?"+":"") + dz.toFixed(1) +
-        " m · " + Math.round(e.d1-e.d0) + " m" };
+      const ordered = secs.slice().sort((a,b) => a.t - b.t);
+      let offset = 0, pts = [], totalDist = 0, totalDz = 0;
+      ordered.forEach(e => {
+        ptsOf(e).forEach(p => pts.push({ x: offset + p.d, y: p.a }));
+        const len = e.d1 - e.d0;
+        offset += len; totalDist += len; totalDz += (e.a1 - e.a0);
+      });
+      return { pts, info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
+        Math.round(totalDist) + " m · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
     }
 
     function drawSecGraph(){
@@ -1279,16 +1318,75 @@
       gc.fillText(Math.round(ymin)+" m", pad.l, h-pad.b-1);
     }
 
-    graphToggle.addEventListener("click", () => {
+    graphHeader.addEventListener("click", () => {
       graphOpen = !graphOpen;
       graphPanel.hidden = !graphOpen;
-      graphToggle.textContent = graphOpen ? "Masquer" : "Afficher";
+      graphHeader.setAttribute("aria-expanded", graphOpen ? "true" : "false");
       if(graphOpen) requestAnimationFrame(drawSecGraph);
     });
-    graphSelect.addEventListener("change", () => { if(graphOpen) drawSecGraph(); });
+
+    // ---- Liste : sections de la sélection (une série, ou toutes avec
+    // séparateurs comme avant). Cliquer sur deux sections calcule la pente
+    // moyenne entre elles (limité à une même série, cf. between()).
+    function buildSecItem(e){
+      const li = document.createElement("li");
+      li.className = "sec-item" + (selected.indexOf(e) >= 0 ? " sel" : "");
+      const nEl = document.createElement("span"); nEl.className = "sec-n"; nEl.textContent = e.n;
+      const body = document.createElement("div"); body.className = "sec-body";
+      const slopeEl = document.createElement("div"); slopeEl.className = "sec-slope";
+      slopeEl.textContent = (e.slope >= 0 ? "+" : "") + e.slope.toFixed(1) + " %";
+      const metaEl = document.createElement("div"); metaEl.className = "sec-meta";
+      const secDz = e.a1 - e.a0;
+      metaEl.textContent = "dénivelé " + (secDz >= 0 ? "+" : "") + secDz.toFixed(1) + " m · "
+                         + Math.round(e.d1 - e.d0) + " m · " + fmtDate(e.t);
+      body.appendChild(slopeEl); body.appendChild(metaEl);
+      const check = document.createElement("span");
+      check.className = "sec-check"; check.textContent = selected.indexOf(e) >= 0 ? "✓" : "";
+      li.appendChild(nEl); li.appendChild(body); li.appendChild(check);
+      li.addEventListener("click", () => toggle(e));
+      return li;
+    }
+
+    function renderList(){
+      listEl.innerHTML = "";
+      const secs = filteredSections();
+      if(!secs.length){
+        const li = document.createElement("li");
+        li.className = "sec-empty";
+        li.textContent = "Aucune section pour cette sélection.";
+        listEl.appendChild(li);
+        return;
+      }
+      if(seriesSelect.value === "all"){
+        // Ordre chronologique déjà stocké, séparateurs de série inclus.
+        for(let k = sectionLog.length - 1; k >= 0; k--){
+          const e = sectionLog[k];
+          if(e.sep){
+            const li = document.createElement("li");
+            li.className = "sec-sep";
+            li.innerHTML =
+              '<div class="sec-sep-badge">Nouvelle série</div>' +
+              '<div class="sec-sep-txt">Fin de la précédente : ' + fmtDate(e.prevEnd) +
+              '<br>Début de la suivante : ' + fmtDate(e.nextStart) + '</div>';
+            listEl.appendChild(li);
+            continue;
+          }
+          listEl.appendChild(buildSecItem(e));
+        }
+      } else {
+        secs.slice().sort((a,b) => b.t - a.t).forEach(e => listEl.appendChild(buildSecItem(e)));
+      }
+    }
+
+    listHeader.addEventListener("click", () => {
+      listOpen = !listOpen;
+      listEl.hidden = !listOpen;
+      listHeader.setAttribute("aria-expanded", listOpen ? "true" : "false");
+      if(listOpen) renderList();
+    });
 
     function render(){
-      populateGraphSelect();
+      populateSeriesSelect();
       if(graphOpen) drawSecGraph();
 
       // Résultat « entre deux sections »
@@ -1313,55 +1411,8 @@
           : "Touchez deux sections pour obtenir la pente moyenne entre elles.";
       }
 
-      // Liste (la plus récente en haut) : sections + séparateurs de série
-      listEl.innerHTML = "";
-      const hasSections = sectionLog.some(e => !e.sep);
-      secClear.hidden = !hasSections;
-      if(!hasSections){
-        const li = document.createElement("li");
-        li.className = "sec-empty";
-        li.textContent = "Aucune section pour l'instant. Lancez la mesure et parcourez au moins 100 m.";
-        listEl.appendChild(li);
-        hintEl.textContent = "";
-        resultEl.hidden = true;
-        return;
-      }
-      for(let k = sectionLog.length - 1; k >= 0; k--){
-        const e = sectionLog[k];
-
-        if(e.sep){
-          const li = document.createElement("li");
-          li.className = "sec-sep";
-          li.innerHTML =
-            '<div class="sec-sep-badge">Nouvelle série</div>' +
-            '<div class="sec-sep-txt">Fin de la précédente : ' + fmtDate(e.prevEnd) +
-            '<br>Début de la suivante : ' + fmtDate(e.nextStart) + '</div>';
-          listEl.appendChild(li);
-          continue;
-        }
-
-        const li = document.createElement("li");
-        li.className = "sec-item" + (selected.indexOf(e) >= 0 ? " sel" : "");
-
-        const nEl = document.createElement("span");
-        nEl.className = "sec-n"; nEl.textContent = e.n;
-
-        const body = document.createElement("div"); body.className = "sec-body";
-        const slopeEl = document.createElement("div"); slopeEl.className = "sec-slope";
-        slopeEl.textContent = (e.slope >= 0 ? "+" : "") + e.slope.toFixed(1) + " %";
-        const metaEl = document.createElement("div"); metaEl.className = "sec-meta";
-        const secDz = e.a1 - e.a0;
-        metaEl.textContent = "dénivelé " + (secDz >= 0 ? "+" : "") + secDz.toFixed(1) + " m · "
-                           + Math.round(e.d1 - e.d0) + " m · " + fmtDate(e.t);
-        body.appendChild(slopeEl); body.appendChild(metaEl);
-
-        const check = document.createElement("span");
-        check.className = "sec-check"; check.textContent = selected.indexOf(e) >= 0 ? "✓" : "";
-
-        li.appendChild(nEl); li.appendChild(body); li.appendChild(check);
-        li.addEventListener("click", () => toggle(e));
-        listEl.appendChild(li);
-      }
+      secClear.hidden = !sectionLog.some(e => !e.sep);
+      if(listOpen) renderList();
     }
 
     // Effacement de tout l'historique persistant (confirmation en deux temps)
