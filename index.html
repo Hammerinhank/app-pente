@@ -454,6 +454,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V13", date:"8 août 2026", changes:[
+      "Correction de la barre verticale du récapitulatif : une seule barre affichée à la fois — celle de la dernière section touchée, la précédente est oubliée dès qu'on en touche une autre. Elle est aussi plus fine et plus lumineuse (halo) pour bien ressortir sur la courbe."
+    ]},
     { v:"V12", date:"8 août 2026", changes:[
       "Dans le récapitulatif : toucher une section dans la liste superpose désormais une barre verticale rouge vif sur le graphique, à l'endroit exact où se situe cette section (jusqu'à 2 en simultané, une par section sélectionnée). Rappel : recliquer sur un titre « Graphique » ou « Sections » referme la partie correspondante (accordéon)."
     ]},
@@ -1169,12 +1172,13 @@
     const listHeader  = $("secListHeader");
     const graphCanvas = $("secGraphCanvas"), gc = graphCanvas.getContext("2d");
 
-    let selected = [];      // sections choisies (max 2), dans l'ordre du toucher
+    let selected = [];      // sections choisies (max 2), dans l'ordre du toucher — pour la pente moyenne
+    let lastTouched = null; // dernière section touchée — pour la barre verticale unique sur le graphique
     let graphOpen = false;
     let listOpen  = false;
 
     function open(){
-      selected = [];
+      selected = []; lastTouched = null;
       graphOpen = false; listOpen = false;
       graphPanel.hidden = true; listEl.hidden = true;
       graphHeader.setAttribute("aria-expanded","false");
@@ -1192,6 +1196,7 @@
     notifySection = () => { if(!modal.hidden) render(); };
 
     function toggle(sec){
+      lastTouched = sec;
       const i = selected.indexOf(sec);
       if(i >= 0) selected.splice(i, 1);
       else { selected.push(sec); if(selected.length > 2) selected.shift(); }
@@ -1253,7 +1258,7 @@
       return secs.filter(e => e.s === id);
     }
 
-    seriesSelect.addEventListener("change", () => { selected = []; render(); });
+    seriesSelect.addEventListener("change", () => { selected = []; lastTouched = null; render(); });
 
     // ---- Graphique : courbe d'altitude de toutes les sections de la
     // sélection (une série, ou toutes), enchaînées chronologiquement.
@@ -1319,21 +1324,19 @@
       for(const p of pts) gc.lineTo(X(p.x), Y(p.y));
       gc.strokeStyle = css("--teal"); gc.lineWidth = 2; gc.lineJoin = "round"; gc.stroke();
 
-      // Barre(s) verticale(s) rouge vif : une par section actuellement
-      // sélectionnée dans la liste (jusqu'à 2), superposée à l'endroit du
-      // graphique où se situe cette section — ignorée si la section n'est
-      // pas dans la sélection actuellement affichée (autre série).
-      if(selected.length){
-        selected.forEach(sec => {
-          const range = ranges.get(sec.n + "|" + sec.s);
-          if(!range) return;
-          const bx0 = X(range.x0), bx1 = Math.max(X(range.x1), X(range.x0) + 2);
-          gc.fillStyle = "rgba(228,104,93,.32)";
-          gc.fillRect(bx0, pad.t, bx1 - bx0, h - pad.t - pad.b);
-          gc.strokeStyle = css("--danger"); gc.lineWidth = 2;
-          gc.beginPath(); gc.moveTo(bx0, pad.t); gc.lineTo(bx0, h-pad.b); gc.stroke();
-          gc.beginPath(); gc.moveTo(bx1, pad.t); gc.lineTo(bx1, h-pad.b); gc.stroke();
-        });
+      // Barre verticale rouge vif : UNE seule, celle de la dernière section
+      // touchée dans la liste (la précédente est oubliée dès qu'on en touche
+      // une autre) — fine et lumineuse pour bien ressortir sur la courbe.
+      if(lastTouched){
+        const range = ranges.get(lastTouched.n + "|" + lastTouched.s);
+        if(range){
+          const bx = X((range.x0 + range.x1) / 2);
+          gc.save();
+          gc.shadowColor = "#FF3B30"; gc.shadowBlur = 8;
+          gc.strokeStyle = "#FF3B30"; gc.lineWidth = 2; gc.lineCap = "round";
+          gc.beginPath(); gc.moveTo(bx, pad.t); gc.lineTo(bx, h-pad.b); gc.stroke();
+          gc.restore();
+        }
       }
 
       gc.fillStyle = css("--muted"); gc.font = "10px ui-monospace,monospace"; gc.textAlign = "left";
@@ -1450,7 +1453,7 @@
       clearTimeout(clearTimer); clearArmed = false;
       secClear.textContent = "Effacer l'historique";
       sectionLog.length = 0; curSeries = 0; persistSections();
-      selected = [];
+      selected = []; lastTouched = null;
       render();
     });
 
