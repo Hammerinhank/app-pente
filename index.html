@@ -174,6 +174,21 @@
   .sec-result .r-lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
   .sec-result .r-val{font-size:30px;font-weight:800;color:var(--amber);letter-spacing:-.02em;margin:4px 0 2px}
   .sec-result .r-sub{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .sec-graph-controls{display:flex;gap:10px;align-items:center}
+  .sec-graph-select{
+    flex:1 1 auto;appearance:none;font-family:inherit;font-size:13.5px;font-weight:600;
+    color:var(--text);background:var(--surface-2);border:1px solid var(--line);
+    border-radius:12px;padding:11px 13px;
+  }
+  .sec-graph-toggle{
+    flex:0 0 auto;appearance:none;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;
+    color:var(--amber);background:var(--amber-dim);border:1px solid var(--amber);border-radius:12px;
+    padding:11px 16px;white-space:nowrap;transition:transform .05s;
+  }
+  .sec-graph-toggle:active{transform:scale(.97)}
+  .sec-graph-panel{margin-top:14px;display:flex;flex-direction:column;gap:9px}
+  .sec-graph-info{font-size:12px;color:var(--muted);line-height:1.5}
+  #secGraphCanvas{height:140px;width:100%;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line-soft)}
   .sec-sep{list-style:none;margin:8px 0 4px;padding:11px 0 5px;border-top:1px dashed var(--line);text-align:center}
   .sec-sep-badge{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber);font-weight:800;margin-bottom:5px}
   .sec-sep-txt{font-size:11px;color:var(--muted);line-height:1.6}
@@ -385,6 +400,17 @@
     <p class="dn-intro">Chaque section de 100 m verrouillée par la mesure automatique apparaît ici avec sa pente. Touchez <b>deux</b> sections pour obtenir la pente moyenne entre elles (calcul sur toute la portion, extrémités comprises).</p>
     <div id="secResult" class="sec-result" hidden></div>
     <div id="secHint" class="dn-hint"></div>
+
+    <div class="dn-sub">Courbe d'altitude par section</div>
+    <div class="sec-graph-controls">
+      <select id="secGraphSelect" class="sec-graph-select"></select>
+      <button id="secGraphToggle" class="sec-graph-toggle" type="button">Afficher</button>
+    </div>
+    <div id="secGraphPanel" class="sec-graph-panel" hidden>
+      <div id="secGraphInfo" class="sec-graph-info"></div>
+      <canvas id="secGraphCanvas"></canvas>
+    </div>
+
     <div class="dn-sub">Sections (la plus récente en haut)</div>
     <ul id="secList" class="sec-list"></ul>
     <button id="secClear" class="dn-clear" type="button" hidden>Effacer l'historique</button>
@@ -411,6 +437,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V10", date:"8 août 2026", changes:[
+      "Dans « Sections 100 m · récapitulatif » : nouvelle combo listant toutes les sections (+ option « Toutes les sections »), avec un bouton Afficher/Masquer pour un panneau de détail replié par défaut. Ce panneau affiche désormais un graphique de la courbe d'altitude — soit celle de la section choisie (relevés réels du segment, pas seulement ses deux extrémités), soit celle de toutes les sections enchaînées chronologiquement. Chaque section verrouillée stocke maintenant son nuage de relevés pour permettre ce tracé."
+    ]},
     { v:"V9", date:"8 août 2026", changes:[
       "Nouveau point rouge sur le graphique « Historique du relief » : toutes les 2 minutes, la moyenne des relevés d'altitude de la fenêtre écoulée est calculée (les valeurs aberrantes — trop éloignées de la moyenne brute — sont écartées avant le calcul final) et vient s'ajouter au tracé déjà continu, sans jamais l'interrompre ni le remplacer."
     ]},
@@ -521,13 +550,17 @@
     runCount    = 0;
     seriesArmed = sectionLog.some(e => !e.sep);
   }
-  function recordSection(d0, a0, d1, a1, slope){
+  function recordSection(d0, a0, d1, a1, slope, samples){
     if(seriesArmed){
       sectionLog.push({ sep:true, prevEnd:lastSectionTime(sectionLog), nextStart:seriesStart });
       seriesArmed = false;
     }
     runCount += 1;
-    sectionLog.push({ n:runCount, d0, a0, d1, a1, slope, t:Date.now(), s:curSeries });
+    // Nuage de relevés (distance LOCALE au segment, 0 → d1-d0 ; altitude), arrondi
+    // pour limiter la taille stockée. Permet de tracer la courbe d'altitude
+    // réelle de la section, pas seulement ses deux extrémités.
+    const pts = (samples || []).map(s => ({ d: Math.round(s.d*10)/10, a: Math.round(s.a*100)/100 }));
+    sectionLog.push({ n:runCount, d0, a0, d1, a1, slope, t:Date.now(), s:curSeries, pts });
     persistSections();
     if(notifySection) notifySection();
   }
@@ -725,7 +758,7 @@
       state.cum += state.liveDist;                    // bornes de fin
       state.history.push({ x:state.cum, y:alt });
       state.locked = slope;
-      recordSection(d0, a0, state.cum, alt, slope);
+      recordSection(d0, a0, state.cum, alt, slope, state.samples);
       state.anchor = cur;          // nouvelle référence d'altitude
       state.prev   = cur;
       state.liveDist = 0;
@@ -1106,8 +1139,12 @@
   (function(){
     const openBtn  = $("secOpen"), modal = $("secModal"), closeBtn = $("secClose");
     const listEl   = $("secList"), resultEl = $("secResult"), hintEl = $("secHint"), secClear = $("secClear");
+    const graphSelect = $("secGraphSelect"), graphToggle = $("secGraphToggle");
+    const graphPanel  = $("secGraphPanel"), graphInfo = $("secGraphInfo");
+    const graphCanvas = $("secGraphCanvas"), gc = graphCanvas.getContext("2d");
 
     let selected = [];   // sections choisies (max 2), dans l'ordre du toucher
+    let graphOpen = false;
 
     function open(){ selected = []; render(); modal.hidden = false; }
     function close(){ modal.hidden = true; }
@@ -1140,7 +1177,120 @@
       return { A, B, dz, dd, slope: dd > 0 ? dz / dd * 100 : null };
     }
 
+    // ---- Sélecteur de section + graphique d'altitude ----
+    function populateGraphSelect(){
+      const prevVal = graphSelect.value;
+      graphSelect.innerHTML = "";
+      const optAll = document.createElement("option");
+      optAll.value = "all"; optAll.textContent = "Toutes les sections";
+      graphSelect.appendChild(optAll);
+      const secs = sectionLog.filter(e => !e.sep);
+      secs.forEach(e => {
+        const opt = document.createElement("option");
+        opt.value = e.n + "|" + e.s;
+        opt.textContent = "Section " + e.n + " · " + fmtDate(e.t);
+        graphSelect.appendChild(opt);
+      });
+      const values = Array.from(graphSelect.options).map(o => o.value);
+      graphSelect.value = values.includes(prevVal) ? prevVal : "all";
+    }
+
+    function sizeGraphCanvas(){
+      const dpr = Math.min(window.devicePixelRatio||1, 3);
+      const r = graphCanvas.getBoundingClientRect();
+      graphCanvas.width  = Math.max(1, Math.round(r.width  * dpr));
+      graphCanvas.height = Math.max(1, Math.round(r.height * dpr));
+      gc.setTransform(dpr,0,0,dpr,0,0);
+      return { w:r.width, h:r.height };
+    }
+
+    // Reconstruit les points à tracer selon la sélection : soit le nuage
+    // complet d'une section (distance locale 0 → longueur), soit toutes les
+    // sections enchaînées chronologiquement (chaque section reprend à la
+    // suite de la précédente sur l'axe, pour rester lisible même si les
+    // distances GPS réelles se chevauchent d'une série à l'autre).
+    function buildGraphPoints(){
+      const val = graphSelect.value;
+      const secs = sectionLog.filter(e => !e.sep);
+      if(!secs.length) return { pts:[], info:"Aucune section enregistrée pour l'instant." };
+
+      const ptsOf = e => (e.pts && e.pts.length) ? e.pts : [{ d:0, a:e.a0 }, { d:e.d1-e.d0, a:e.a1 }];
+
+      if(val === "all"){
+        const ordered = secs.slice().sort((a,b) => a.t - b.t);
+        let offset = 0, pts = [], totalDist = 0, totalDz = 0;
+        ordered.forEach(e => {
+          ptsOf(e).forEach(p => pts.push({ x: offset + p.d, y: p.a }));
+          const len = e.d1 - e.d0;
+          offset += len; totalDist += len; totalDz += (e.a1 - e.a0);
+        });
+        return { pts, info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
+          Math.round(totalDist) + " m · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
+      }
+
+      const [nStr, sStr] = val.split("|");
+      const n = parseInt(nStr,10), s = parseInt(sStr,10);
+      const e = secs.find(x => x.n === n && x.s === s);
+      if(!e) return { pts:[], info:"Section introuvable." };
+      const pts = ptsOf(e).map(p => ({ x:p.d, y:p.a }));
+      const dz = e.a1 - e.a0;
+      return { pts, info: "Section " + e.n + " · " + fmtDate(e.t) + " · pente " +
+        (e.slope>=0?"+":"") + e.slope.toFixed(1) + " % · dénivelé " + (dz>=0?"+":"") + dz.toFixed(1) +
+        " m · " + Math.round(e.d1-e.d0) + " m" };
+    }
+
+    function drawSecGraph(){
+      const { w, h } = sizeGraphCanvas(); if(!w) return;
+      gc.clearRect(0,0,w,h);
+      const { pts, info } = buildGraphPoints();
+      graphInfo.textContent = info;
+      if(pts.length < 2){
+        gc.fillStyle = css("--muted"); gc.font = "12px ui-monospace,monospace"; gc.textAlign = "center";
+        gc.fillText("Pas assez de données pour tracer la courbe.", w/2, h/2);
+        return;
+      }
+      const pad = { l:8, r:8, t:10, b:8 };
+      const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+      let xmin = Math.min(...xs), xmax = Math.max(...xs);
+      let ymin = Math.min(...ys), ymax = Math.max(...ys);
+      if(xmax-xmin < 1) xmax = xmin+1;
+      const py = Math.max(1, (ymax-ymin)*0.15); ymin -= py; ymax += py;
+      if(ymax-ymin < 2){ const m=(ymin+ymax)/2; ymin=m-1; ymax=m+1; }
+      const X = x => pad.l + (x-xmin)/(xmax-xmin)*(w-pad.l-pad.r);
+      const Y = y => pad.t + (1-(y-ymin)/(ymax-ymin))*(h-pad.t-pad.b);
+
+      gc.strokeStyle = css("--line-soft"); gc.lineWidth = 1;
+      for(let i=0;i<=3;i++){ const yy = pad.t + i/3*(h-pad.t-pad.b);
+        gc.beginPath(); gc.moveTo(pad.l,yy); gc.lineTo(w-pad.r,yy); gc.stroke(); }
+
+      const grad = gc.createLinearGradient(0,pad.t,0,h-pad.b);
+      grad.addColorStop(0, css("--teal-dim")); grad.addColorStop(1, "rgba(84,183,169,0)");
+      gc.beginPath(); gc.moveTo(X(pts[0].x), Y(pts[0].y));
+      for(const p of pts) gc.lineTo(X(p.x), Y(p.y));
+      gc.lineTo(X(pts[pts.length-1].x), h-pad.b); gc.lineTo(X(pts[0].x), h-pad.b); gc.closePath();
+      gc.fillStyle = grad; gc.fill();
+
+      gc.beginPath(); gc.moveTo(X(pts[0].x), Y(pts[0].y));
+      for(const p of pts) gc.lineTo(X(p.x), Y(p.y));
+      gc.strokeStyle = css("--teal"); gc.lineWidth = 2; gc.lineJoin = "round"; gc.stroke();
+
+      gc.fillStyle = css("--muted"); gc.font = "10px ui-monospace,monospace"; gc.textAlign = "left";
+      gc.fillText(Math.round(ymax)+" m", pad.l, pad.t+2);
+      gc.fillText(Math.round(ymin)+" m", pad.l, h-pad.b-1);
+    }
+
+    graphToggle.addEventListener("click", () => {
+      graphOpen = !graphOpen;
+      graphPanel.hidden = !graphOpen;
+      graphToggle.textContent = graphOpen ? "Masquer" : "Afficher";
+      if(graphOpen) requestAnimationFrame(drawSecGraph);
+    });
+    graphSelect.addEventListener("change", () => { if(graphOpen) drawSecGraph(); });
+
     function render(){
+      populateGraphSelect();
+      if(graphOpen) drawSecGraph();
+
       // Résultat « entre deux sections »
       const r = between();
       if(r && r.crossSeries){
