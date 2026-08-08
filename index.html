@@ -454,6 +454,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V12", date:"8 août 2026", changes:[
+      "Dans le récapitulatif : toucher une section dans la liste superpose désormais une barre verticale rouge vif sur le graphique, à l'endroit exact où se situe cette section (jusqu'à 2 en simultané, une par section sélectionnée). Rappel : recliquer sur un titre « Graphique » ou « Sections » referme la partie correspondante (accordéon)."
+    ]},
     { v:"V11", date:"8 août 2026", changes:[
       "Correction du récapitulatif des sections : la combo sélectionne désormais une SÉRIE entière (identifiée par sa date de début et son nombre de sections, comme dans les séparateurs de la liste) plutôt qu'une section isolée, avec une option « Toutes les séries ». Deux titres indépendants et repliés par défaut, « Graphique » et « Sections » : le premier déplie la courbe d'altitude de toutes les sections de la sélection (enchaînées chronologiquement), le second déplie leur liste détaillée. Choisir « Toutes les séries » fait porter le graphique et la liste sur l'ensemble des sections, toutes séries confondues."
     ]},
@@ -1265,23 +1268,26 @@
 
     function buildGraphPoints(){
       const secs = filteredSections();
-      if(!secs.length) return { pts:[], info:"Aucune section pour cette sélection." };
+      if(!secs.length) return { pts:[], info:"Aucune section pour cette sélection.", ranges:new Map() };
       const ptsOf = e => (e.pts && e.pts.length) ? e.pts : [{ d:0, a:e.a0 }, { d:e.d1-e.d0, a:e.a1 }];
       const ordered = secs.slice().sort((a,b) => a.t - b.t);
       let offset = 0, pts = [], totalDist = 0, totalDz = 0;
+      const ranges = new Map();   // clé "n|s" → { x0, x1 } dans le repère du graphique
       ordered.forEach(e => {
+        const x0 = offset;
         ptsOf(e).forEach(p => pts.push({ x: offset + p.d, y: p.a }));
         const len = e.d1 - e.d0;
         offset += len; totalDist += len; totalDz += (e.a1 - e.a0);
+        ranges.set(e.n + "|" + e.s, { x0, x1: offset });
       });
-      return { pts, info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
+      return { pts, ranges, info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
         Math.round(totalDist) + " m · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
     }
 
     function drawSecGraph(){
       const { w, h } = sizeGraphCanvas(); if(!w) return;
       gc.clearRect(0,0,w,h);
-      const { pts, info } = buildGraphPoints();
+      const { pts, info, ranges } = buildGraphPoints();
       graphInfo.textContent = info;
       if(pts.length < 2){
         gc.fillStyle = css("--muted"); gc.font = "12px ui-monospace,monospace"; gc.textAlign = "center";
@@ -1312,6 +1318,23 @@
       gc.beginPath(); gc.moveTo(X(pts[0].x), Y(pts[0].y));
       for(const p of pts) gc.lineTo(X(p.x), Y(p.y));
       gc.strokeStyle = css("--teal"); gc.lineWidth = 2; gc.lineJoin = "round"; gc.stroke();
+
+      // Barre(s) verticale(s) rouge vif : une par section actuellement
+      // sélectionnée dans la liste (jusqu'à 2), superposée à l'endroit du
+      // graphique où se situe cette section — ignorée si la section n'est
+      // pas dans la sélection actuellement affichée (autre série).
+      if(selected.length){
+        selected.forEach(sec => {
+          const range = ranges.get(sec.n + "|" + sec.s);
+          if(!range) return;
+          const bx0 = X(range.x0), bx1 = Math.max(X(range.x1), X(range.x0) + 2);
+          gc.fillStyle = "rgba(228,104,93,.32)";
+          gc.fillRect(bx0, pad.t, bx1 - bx0, h - pad.t - pad.b);
+          gc.strokeStyle = css("--danger"); gc.lineWidth = 2;
+          gc.beginPath(); gc.moveTo(bx0, pad.t); gc.lineTo(bx0, h-pad.b); gc.stroke();
+          gc.beginPath(); gc.moveTo(bx1, pad.t); gc.lineTo(bx1, h-pad.b); gc.stroke();
+        });
+      }
 
       gc.fillStyle = css("--muted"); gc.font = "10px ui-monospace,monospace"; gc.textAlign = "left";
       gc.fillText(Math.round(ymax)+" m", pad.l, pad.t+2);
