@@ -202,7 +202,7 @@
   .sec-graph-panel{margin-top:14px;display:flex;flex-direction:column;gap:9px}
   .sec-graph-panel[hidden]{display:none}
   .sec-graph-info{font-size:12px;color:var(--muted);line-height:1.5}
-  #secGraphCanvas{height:140px;width:100%;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line-soft)}
+  #secGraphCanvas{height:140px;width:100%;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line-soft);cursor:pointer}
   .sec-sep{list-style:none;margin:8px 0 4px;padding:11px 0 5px;border-top:1px dashed var(--line);text-align:center}
   .sec-sep-badge{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber);font-weight:800;margin-bottom:5px}
   .sec-sep-txt{font-size:11px;color:var(--muted);line-height:1.6}
@@ -456,6 +456,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V15", date:"8 août 2026", changes:[
+      "Réciproque du récapitulatif : toucher une zone du graphique fait apparaître la barre rouge à la distance ainsi désignée et sélectionne la section correspondante dans la liste (dépliée automatiquement si besoin) — la liste défile pour amener cette section visible à l'écran."
+    ]},
     { v:"V14", date:"8 août 2026", changes:[
       "Correction : recliquer sur « Graphique » ou « Sections » alors que la zone était dépliée ne la refermait pas — leurs classes CSS imposaient display:flex, ce qui l'emportait sur l'attribut hidden posé par le JavaScript. Ajout des règles [hidden] manquantes (même principe que pour les fenêtres modales), le repli fonctionne maintenant normalement dans les deux sens."
     ]},
@@ -1181,6 +1184,8 @@
     let lastTouched = null; // dernière section touchée — pour la barre verticale unique sur le graphique
     let graphOpen = false;
     let listOpen  = false;
+    let lastGraphLayout = null; // repère (pad, xmin, xmax, w) du dernier tracé, pour inverser un clic en distance
+    let pendingScrollKey = null; // clé "n|s" à faire défiler en vue dans la liste après le prochain rendu
 
     function open(){
       selected = []; lastTouched = null;
@@ -1299,6 +1304,7 @@
       gc.clearRect(0,0,w,h);
       const { pts, info, ranges } = buildGraphPoints();
       graphInfo.textContent = info;
+      lastGraphLayout = null;
       if(pts.length < 2){
         gc.fillStyle = css("--muted"); gc.font = "12px ui-monospace,monospace"; gc.textAlign = "center";
         gc.fillText("Pas assez de données pour tracer la courbe.", w/2, h/2);
@@ -1313,6 +1319,7 @@
       if(ymax-ymin < 2){ const m=(ymin+ymax)/2; ymin=m-1; ymax=m+1; }
       const X = x => pad.l + (x-xmin)/(xmax-xmin)*(w-pad.l-pad.r);
       const Y = y => pad.t + (1-(y-ymin)/(ymax-ymin))*(h-pad.t-pad.b);
+      lastGraphLayout = { pad, xmin, xmax, w };
 
       gc.strokeStyle = css("--line-soft"); gc.lineWidth = 1;
       for(let i=0;i<=3;i++){ const yy = pad.t + i/3*(h-pad.t-pad.b);
@@ -1356,12 +1363,44 @@
       if(graphOpen) requestAnimationFrame(drawSecGraph);
     });
 
+    // Clic sur le graphique → identifie la section sous le doigt (via le
+    // repère du dernier tracé), la sélectionne comme un toucher dans la
+    // liste (barre rouge + comparaison éventuelle), déplie « Sections » si
+    // besoin et fait défiler la liste jusqu'à elle.
+    graphCanvas.addEventListener("click", ev => {
+      if(!lastGraphLayout) return;
+      const rect = graphCanvas.getBoundingClientRect();
+      const px = ev.clientX - rect.left;
+      const { pad, xmin, xmax, w } = lastGraphLayout;
+      const span = w - pad.l - pad.r;
+      if(xmax - xmin <= 0 || span <= 0) return;
+      const value = xmin + (px - pad.l) / span * (xmax - xmin);
+
+      const { ranges } = buildGraphPoints();
+      let hitKey = null;
+      for(const [key, r] of ranges){
+        if(value >= r.x0 && value <= r.x1){ hitKey = key; break; }
+      }
+      if(!hitKey) return;
+      const sec = filteredSections().find(e => (e.n + "|" + e.s) === hitKey);
+      if(!sec) return;
+
+      if(!listOpen){
+        listOpen = true;
+        listEl.hidden = false;
+        listHeader.setAttribute("aria-expanded", "true");
+      }
+      pendingScrollKey = hitKey;
+      toggle(sec);   // met à jour selected/lastTouched, redessine et re-rend la liste
+    });
+
     // ---- Liste : sections de la sélection (une série, ou toutes avec
     // séparateurs comme avant). Cliquer sur deux sections calcule la pente
     // moyenne entre elles (limité à une même série, cf. between()).
     function buildSecItem(e){
       const li = document.createElement("li");
       li.className = "sec-item" + (selected.indexOf(e) >= 0 ? " sel" : "");
+      li.dataset.key = e.n + "|" + e.s;
       const nEl = document.createElement("span"); nEl.className = "sec-n"; nEl.textContent = e.n;
       const body = document.createElement("div"); body.className = "sec-body";
       const slopeEl = document.createElement("div"); slopeEl.className = "sec-slope";
@@ -1443,7 +1482,14 @@
       }
 
       secClear.hidden = !sectionLog.some(e => !e.sep);
-      if(listOpen) renderList();
+      if(listOpen){
+        renderList();
+        if(pendingScrollKey){
+          const li = listEl.querySelector('[data-key="' + pendingScrollKey + '"]');
+          if(li) li.scrollIntoView({ block:"center", behavior:"smooth" });
+          pendingScrollKey = null;
+        }
+      }
     }
 
     // Effacement de tout l'historique persistant (confirmation en deux temps)
