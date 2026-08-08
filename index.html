@@ -147,6 +147,7 @@
 
   /* Récapitulatif des sections */
   .sec-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .sec-list[hidden]{display:none}
   .sec-empty{font-size:13px;color:var(--muted);text-align:center;padding:14px 8px;line-height:1.5}
   .sec-item{
     cursor:pointer;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:12px;
@@ -199,6 +200,7 @@
   }
   .sec-graph-toggle:active{transform:scale(.97)}
   .sec-graph-panel{margin-top:14px;display:flex;flex-direction:column;gap:9px}
+  .sec-graph-panel[hidden]{display:none}
   .sec-graph-info{font-size:12px;color:var(--muted);line-height:1.5}
   #secGraphCanvas{height:140px;width:100%;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line-soft)}
   .sec-sep{list-style:none;margin:8px 0 4px;padding:11px 0 5px;border-top:1px dashed var(--line);text-align:center}
@@ -454,6 +456,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V14", date:"8 août 2026", changes:[
+      "Correction : recliquer sur « Graphique » ou « Sections » alors que la zone était dépliée ne la refermait pas — leurs classes CSS imposaient display:flex, ce qui l'emportait sur l'attribut hidden posé par le JavaScript. Ajout des règles [hidden] manquantes (même principe que pour les fenêtres modales), le repli fonctionne maintenant normalement dans les deux sens."
+    ]},
     { v:"V13", date:"8 août 2026", changes:[
       "Correction de la barre verticale du récapitulatif : une seule barre affichée à la fois — celle de la dernière section touchée, la précédente est oubliée dès qu'on en touche une autre. Elle est aussi plus fine et plus lumineuse (halo) pour bien ressortir sur la courbe."
     ]},
