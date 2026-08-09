@@ -465,6 +465,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V19", date:"8 août 2026", changes:[
+      "Dans « Historique des versions » : seul le bouton ✕ referme désormais la fenêtre et ramène au menu principal — le clic hors de la carte et la touche Échap ne le font plus."
+    ]},
     { v:"V18", date:"8 août 2026", changes:[
       "Vérifié et figé explicitement (commentaire + test) : changer de série dans le récapitulatif ne modifie jamais l'état déplié/replié des panneaux Graphique, Sections et Carte — seul un clic sur leur propre titre le fait. Seule la sélection (pente moyenne / barre rouge) est réinitialisée, puisqu'elle n'a plus de sens d'une série à l'autre."
     ]},
@@ -554,8 +557,8 @@
   function closeVer(){ verModal.hidden = true; }
   $("version").addEventListener("click", openVer);
   $("verClose").addEventListener("click", closeVer);
-  verModal.addEventListener("click", e => { if(e.target === verModal) closeVer(); }); // clic hors carte
-  document.addEventListener("keydown", e => { if(e.key === "Escape" && !verModal.hidden) closeVer(); });
+  // Seul le bouton « ✕ » referme cette fenêtre : ni le clic hors carte, ni
+  // la touche Échap ne doivent y ramener au menu principal.
 
   const TRIGGER = 100;   // distance PARCOURUE (m) déclenchant un nouveau point de référence
   const SHOW_MIN_D = 15; // recul mini (m) avant d'envisager d'afficher une pente
