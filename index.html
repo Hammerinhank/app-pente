@@ -465,6 +465,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V18", date:"8 août 2026", changes:[
+      "Vérifié et figé explicitement (commentaire + test) : changer de série dans le récapitulatif ne modifie jamais l'état déplié/replié des panneaux Graphique, Sections et Carte — seul un clic sur leur propre titre le fait. Seule la sélection (pente moyenne / barre rouge) est réinitialisée, puisqu'elle n'a plus de sens d'une série à l'autre."
+    ]},
     { v:"V17", date:"8 août 2026", changes:[
       "Le titre « Carte » du récapitulatif est désormais un accordéon comme « Graphique » et « Sections » : replié par défaut, un clic la déplie, un reclic la referme."
     ]},
@@ -1292,6 +1295,11 @@
       return secs.filter(e => e.s === id);
     }
 
+    // Le changement de série ne doit JAMAIS modifier la visibilité des
+    // panneaux Graphique/Sections/Carte : seuls les clics sur leurs titres
+    // le font (voir les gestionnaires *Header ci-dessous). Ici on se
+    // contente donc de réinitialiser la sélection (obsolète d'une série à
+    // l'autre) puis de redessiner ce qui est déjà déplié.
     seriesSelect.addEventListener("change", () => { selected = []; lastTouched = null; render(); });
 
     // ---- Graphique : courbe d'altitude de toutes les sections de la
