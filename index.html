@@ -84,9 +84,16 @@
     width:100%;max-width:520px;background:var(--surface);
     border:1px solid var(--line);border-radius:20px;padding:18px 18px 20px;
     animation:rise .24s ease;
+    max-height:calc(100dvh - 64px);
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;
   }
   @keyframes rise{from{transform:translateY(18px);opacity:0}to{transform:none;opacity:1}}
-  .modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .modal-head{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    position:sticky;top:0;background:var(--surface);z-index:2;padding-bottom:6px;
+  }
   .modal-title{font-size:17px;font-weight:800;letter-spacing:.02em}
   .modal-title b{color:var(--amber);font-weight:800}
   .modal-close{
@@ -465,6 +472,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V23", date:"8 août 2026", changes:[
+      "Vraie correction du blocage de défilement (V21/V22 avaient supprimé un rebond de page qui, par accident, permettait de remonter voir le bouton ✕ sur du contenu très long — ce n'était pas un vrai défilement). Les fenêtres (Historique des versions, Méthode 2 points, Sections) ont désormais leur propre défilement interne, indépendant de la page, avec le titre et le bouton ✕ fixés en haut en permanence quel que soit le défilement du contenu."
+    ]},
     { v:"V22", date:"8 août 2026", changes:[
       "Correction V21 : le overscroll-behavior:contain ajouté sur les listes internes (historique des versions, mesures 2 points, sections) bloquait leur propre défilement sur iOS — retiré. Seule la règle globale sur la page est conservée pour empêcher le tirer-vers-le-bas ; elle ne gêne pas le défilement des listes."
     ]},
