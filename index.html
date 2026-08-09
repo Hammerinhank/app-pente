@@ -433,9 +433,13 @@
     </button>
     <ul id="secList" class="sec-list" hidden></ul>
 
-    <div class="dn-sub">Carte</div>
-    <div id="secMapInfo" class="sec-graph-info"></div>
-    <canvas id="secMapCanvas"></canvas>
+    <button id="secMapHeader" class="sec-accordion-header" type="button" aria-expanded="false">
+      <span>Carte</span><span class="chev">▾</span>
+    </button>
+    <div id="secMapPanel" class="sec-graph-panel" hidden>
+      <div id="secMapInfo" class="sec-graph-info"></div>
+      <canvas id="secMapCanvas"></canvas>
+    </div>
 
     <button id="secClear" class="dn-clear" type="button" hidden>Effacer l'historique</button>
   </div>
@@ -461,6 +465,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V17", date:"8 août 2026", changes:[
+      "Le titre « Carte » du récapitulatif est désormais un accordéon comme « Graphique » et « Sections » : replié par défaut, un clic la déplie, un reclic la referme."
+    ]},
     { v:"V16", date:"8 août 2026", changes:[
       "Chaque section verrouillée mémorise désormais la latitude/longitude de son début et de sa fin. Nouvelle carte dans le récapitulatif, après la liste des sections : trace le parcours (lat/lon) des sections de la sélection courante, et superpose un segment rouge vif reliant début et fin de la section actuellement mise en évidence (même section que la barre rouge du graphique). Projection locale simple, sans fond de carte téléchargé, cohérente avec le fonctionnement hors ligne de l'app. Les sections déjà enregistrées avant cette version n'ont pas de localisation et n'apparaissent pas sur la carte."
     ]},
@@ -1191,6 +1198,7 @@
     const seriesSelect = $("secSeriesSelect");
     const graphHeader = $("secGraphHeader"), graphPanel = $("secGraphPanel"), graphInfo = $("secGraphInfo");
     const listHeader  = $("secListHeader");
+    const mapHeader = $("secMapHeader"), mapPanel = $("secMapPanel");
     const graphCanvas = $("secGraphCanvas"), gc = graphCanvas.getContext("2d");
     const mapCanvas = $("secMapCanvas"), mc = mapCanvas.getContext("2d"), mapInfo = $("secMapInfo");
 
@@ -1198,18 +1206,19 @@
     let lastTouched = null; // dernière section touchée — pour la barre verticale unique sur le graphique
     let graphOpen = false;
     let listOpen  = false;
+    let mapOpen   = false;
     let lastGraphLayout = null; // repère (pad, xmin, xmax, w) du dernier tracé, pour inverser un clic en distance
     let pendingScrollKey = null; // clé "n|s" à faire défiler en vue dans la liste après le prochain rendu
 
     function open(){
       selected = []; lastTouched = null;
-      graphOpen = false; listOpen = false;
-      graphPanel.hidden = true; listEl.hidden = true;
+      graphOpen = false; listOpen = false; mapOpen = false;
+      graphPanel.hidden = true; listEl.hidden = true; mapPanel.hidden = true;
       graphHeader.setAttribute("aria-expanded","false");
       listHeader.setAttribute("aria-expanded","false");
+      mapHeader.setAttribute("aria-expanded","false");
       modal.hidden = false;      // visible AVANT le rendu pour que les canvas se dimensionnent correctement
       render();
-      requestAnimationFrame(drawSecMap);
     }
     function close(){ modal.hidden = true; }
     openBtn.addEventListener("click", open);
@@ -1465,6 +1474,13 @@
       if(graphOpen) requestAnimationFrame(drawSecGraph);
     });
 
+    mapHeader.addEventListener("click", () => {
+      mapOpen = !mapOpen;
+      mapPanel.hidden = !mapOpen;
+      mapHeader.setAttribute("aria-expanded", mapOpen ? "true" : "false");
+      if(mapOpen) requestAnimationFrame(drawSecMap);
+    });
+
     // Clic sur le graphique → identifie la section sous le doigt (via le
     // repère du dernier tracé), la sélectionne comme un toucher dans la
     // liste (barre rouge + comparaison éventuelle), déplie « Sections » si
@@ -1560,7 +1576,7 @@
     function render(){
       populateSeriesSelect();
       if(graphOpen) drawSecGraph();
-      drawSecMap();
+      if(mapOpen) drawSecMap();
 
       // Résultat « entre deux sections »
       const r = between();
