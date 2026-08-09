@@ -465,6 +465,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V20", date:"8 août 2026", changes:[
+      "Même correction que V19 pour « Sections 100 m · récapitulatif » : seul le bouton ✕ referme désormais la fenêtre — un clic accidentel en dehors de la carte n'en sort plus."
+    ]},
     { v:"V19", date:"8 août 2026", changes:[
       "Dans « Historique des versions » : seul le bouton ✕ referme désormais la fenêtre et ramène au menu principal — le clic hors de la carte et la touche Échap ne le font plus."
     ]},
@@ -1229,8 +1232,8 @@
     function close(){ modal.hidden = true; }
     openBtn.addEventListener("click", open);
     closeBtn.addEventListener("click", close);
-    modal.addEventListener("click", e => { if(e.target === modal) close(); });
-    document.addEventListener("keydown", e => { if(e.key === "Escape" && !modal.hidden) close(); });
+    // Seul le bouton « ✕ » referme cette fenêtre : ni le clic hors carte, ni
+    // la touche Échap ne doivent y ramener au menu principal.
 
     // Rafraîchissement live si une section se verrouille pendant que la fenêtre est ouverte
     notifySection = () => { if(!modal.hidden) render(); };
