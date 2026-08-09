@@ -203,6 +203,7 @@
   .sec-graph-panel[hidden]{display:none}
   .sec-graph-info{font-size:12px;color:var(--muted);line-height:1.5}
   #secGraphCanvas{height:140px;width:100%;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line-soft);cursor:pointer}
+  #secMapCanvas{height:180px;width:100%;display:block;border-radius:10px;background:var(--surface-2);border:1px solid var(--line-soft)}
   .sec-sep{list-style:none;margin:8px 0 4px;padding:11px 0 5px;border-top:1px dashed var(--line);text-align:center}
   .sec-sep-badge{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber);font-weight:800;margin-bottom:5px}
   .sec-sep-txt{font-size:11px;color:var(--muted);line-height:1.6}
@@ -432,6 +433,10 @@
     </button>
     <ul id="secList" class="sec-list" hidden></ul>
 
+    <div class="dn-sub">Carte</div>
+    <div id="secMapInfo" class="sec-graph-info"></div>
+    <canvas id="secMapCanvas"></canvas>
+
     <button id="secClear" class="dn-clear" type="button" hidden>Effacer l'historique</button>
   </div>
 </div>
@@ -456,6 +461,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V16", date:"8 août 2026", changes:[
+      "Chaque section verrouillée mémorise désormais la latitude/longitude de son début et de sa fin. Nouvelle carte dans le récapitulatif, après la liste des sections : trace le parcours (lat/lon) des sections de la sélection courante, et superpose un segment rouge vif reliant début et fin de la section actuellement mise en évidence (même section que la barre rouge du graphique). Projection locale simple, sans fond de carte téléchargé, cohérente avec le fonctionnement hors ligne de l'app. Les sections déjà enregistrées avant cette version n'ont pas de localisation et n'apparaissent pas sur la carte."
+    ]},
     { v:"V15", date:"8 août 2026", changes:[
       "Réciproque du récapitulatif : toucher une zone du graphique fait apparaître la barre rouge à la distance ainsi désignée et sélectionne la section correspondante dans la liste (dépliée automatiquement si besoin) — la liste défile pour amener cette section visible à l'écran."
     ]},
@@ -584,7 +592,7 @@
     runCount    = 0;
     seriesArmed = sectionLog.some(e => !e.sep);
   }
-  function recordSection(d0, a0, d1, a1, slope, samples){
+  function recordSection(d0, a0, d1, a1, slope, samples, lat0, lon0, lat1, lon1){
     if(seriesArmed){
       sectionLog.push({ sep:true, prevEnd:lastSectionTime(sectionLog), nextStart:seriesStart });
       seriesArmed = false;
@@ -594,7 +602,11 @@
     // pour limiter la taille stockée. Permet de tracer la courbe d'altitude
     // réelle de la section, pas seulement ses deux extrémités.
     const pts = (samples || []).map(s => ({ d: Math.round(s.d*10)/10, a: Math.round(s.a*100)/100 }));
-    sectionLog.push({ n:runCount, d0, a0, d1, a1, slope, t:Date.now(), s:curSeries, pts });
+    // Localisation GPS de début et de fin de la section, pour pouvoir la
+    // replacer sur la carte.
+    const round6 = v => (v == null ? null : Math.round(v*1e6)/1e6);
+    sectionLog.push({ n:runCount, d0, a0, d1, a1, slope, t:Date.now(), s:curSeries, pts,
+      lat0:round6(lat0), lon0:round6(lon0), lat1:round6(lat1), lon1:round6(lon1) });
     persistSections();
     if(notifySection) notifySection();
   }
@@ -792,7 +804,8 @@
       state.cum += state.liveDist;                    // bornes de fin
       state.history.push({ x:state.cum, y:alt });
       state.locked = slope;
-      recordSection(d0, a0, state.cum, alt, slope, state.samples);
+      recordSection(d0, a0, state.cum, alt, slope, state.samples,
+        state.anchor.lat, state.anchor.lon, cur.lat, cur.lon);
       state.anchor = cur;          // nouvelle référence d'altitude
       state.prev   = cur;
       state.liveDist = 0;
@@ -1179,6 +1192,7 @@
     const graphHeader = $("secGraphHeader"), graphPanel = $("secGraphPanel"), graphInfo = $("secGraphInfo");
     const listHeader  = $("secListHeader");
     const graphCanvas = $("secGraphCanvas"), gc = graphCanvas.getContext("2d");
+    const mapCanvas = $("secMapCanvas"), mc = mapCanvas.getContext("2d"), mapInfo = $("secMapInfo");
 
     let selected = [];      // sections choisies (max 2), dans l'ordre du toucher — pour la pente moyenne
     let lastTouched = null; // dernière section touchée — pour la barre verticale unique sur le graphique
@@ -1193,8 +1207,9 @@
       graphPanel.hidden = true; listEl.hidden = true;
       graphHeader.setAttribute("aria-expanded","false");
       listHeader.setAttribute("aria-expanded","false");
+      modal.hidden = false;      // visible AVANT le rendu pour que les canvas se dimensionnent correctement
       render();
-      modal.hidden = false;
+      requestAnimationFrame(drawSecMap);
     }
     function close(){ modal.hidden = true; }
     openBtn.addEventListener("click", open);
@@ -1356,6 +1371,93 @@
       gc.fillText(Math.round(ymin)+" m", pad.l, h-pad.b-1);
     }
 
+    // ---- Carte : parcours (lat/lon) des sections de la sélection courante,
+    // avec un segment rouge vif reliant début et fin de la section
+    // actuellement mise en évidence (lastTouched) — même logique que la
+    // barre verticale du graphique. Projection équirectangulaire locale
+    // (pas de fond de carte téléchargé, cohérent avec le fonctionnement
+    // hors ligne de l'app) : la longitude est mise à l'échelle par
+    // cos(latitude moyenne) pour ne pas déformer le tracé.
+    function sizeMapCanvas(){
+      const dpr = Math.min(window.devicePixelRatio||1, 3);
+      const r = mapCanvas.getBoundingClientRect();
+      mapCanvas.width  = Math.max(1, Math.round(r.width  * dpr));
+      mapCanvas.height = Math.max(1, Math.round(r.height * dpr));
+      mc.setTransform(dpr,0,0,dpr,0,0);
+      return { w:r.width, h:r.height };
+    }
+
+    function buildMapSegments(){
+      const secs = filteredSections().filter(e => e.lat0 != null && e.lat1 != null);
+      if(!secs.length) return { segs:[], info:"Aucune localisation enregistrée pour cette sélection." };
+      const ordered = secs.slice().sort((a,b) => a.t - b.t);
+      const segs = ordered.map(e => ({ lat0:e.lat0, lon0:e.lon0, lat1:e.lat1, lon1:e.lon1, key:e.n+"|"+e.s }));
+      return { segs, info: ordered.length + " section" + (ordered.length>1?"s":"") + " localisée" + (ordered.length>1?"s":"") };
+    }
+
+    function drawSecMap(){
+      const { w, h } = sizeMapCanvas(); if(!w) return;
+      mc.clearRect(0,0,w,h);
+      const { segs, info } = buildMapSegments();
+      mapInfo.textContent = info;
+      if(!segs.length){
+        mc.fillStyle = css("--muted"); mc.font = "12px ui-monospace,monospace"; mc.textAlign = "center";
+        mc.fillText("Pas de localisation à afficher.", w/2, h/2);
+        return;
+      }
+
+      const lats = [], lons = [];
+      segs.forEach(s => { lats.push(s.lat0, s.lat1); lons.push(s.lon0, s.lon1); });
+      const latMid = lats.reduce((a,b)=>a+b,0) / lats.length;
+      const cosLat = Math.max(0.2, Math.cos(latMid * Math.PI/180));
+      const proj = (lat,lon) => ({ x: lon*cosLat, y: lat });
+
+      const pts = [];
+      segs.forEach(s => { pts.push(proj(s.lat0,s.lon0)); pts.push(proj(s.lat1,s.lon1)); });
+      const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+      const xmin=Math.min(...xs), xmax=Math.max(...xs);
+      const ymin=Math.min(...ys), ymax=Math.max(...ys);
+      const pad = { l:12, r:12, t:12, b:12 };
+      const spanX = Math.max(xmax-xmin, 1e-7), spanY = Math.max(ymax-ymin, 1e-7);
+      const scale = Math.min((w-pad.l-pad.r)/spanX, (h-pad.t-pad.b)/spanY);
+      const cx = (xmin+xmax)/2, cy = (ymin+ymax)/2;
+      const X = x => w/2 + (x-cx)*scale;
+      const Y = y => h/2 - (y-cy)*scale;   // nord vers le haut
+
+      // Parcours de base, discret
+      mc.strokeStyle = css("--teal"); mc.lineWidth = 2.5; mc.lineJoin = "round"; mc.lineCap = "round";
+      mc.beginPath();
+      segs.forEach(s => {
+        const p0 = proj(s.lat0,s.lon0), p1 = proj(s.lat1,s.lon1);
+        mc.moveTo(X(p0.x), Y(p0.y)); mc.lineTo(X(p1.x), Y(p1.y));
+      });
+      mc.stroke();
+
+      mc.fillStyle = css("--teal");
+      segs.forEach(s => {
+        const p0 = proj(s.lat0,s.lon0);
+        mc.beginPath(); mc.arc(X(p0.x), Y(p0.y), 2, 0, Math.PI*2); mc.fill();
+      });
+      const pEnd = proj(segs[segs.length-1].lat1, segs[segs.length-1].lon1);
+      mc.beginPath(); mc.arc(X(pEnd.x), Y(pEnd.y), 2, 0, Math.PI*2); mc.fill();
+
+      // Segment rouge vif : section actuellement mise en évidence
+      if(lastTouched){
+        const sec = segs.find(s => s.key === (lastTouched.n + "|" + lastTouched.s));
+        if(sec){
+          const p0 = proj(sec.lat0, sec.lon0), p1 = proj(sec.lat1, sec.lon1);
+          mc.save();
+          mc.shadowColor = "#FF3B30"; mc.shadowBlur = 8;
+          mc.strokeStyle = "#FF3B30"; mc.lineWidth = 3; mc.lineCap = "round";
+          mc.beginPath(); mc.moveTo(X(p0.x), Y(p0.y)); mc.lineTo(X(p1.x), Y(p1.y)); mc.stroke();
+          mc.restore();
+          mc.fillStyle = "#FF3B30";
+          mc.beginPath(); mc.arc(X(p0.x), Y(p0.y), 3.5, 0, Math.PI*2); mc.fill();
+          mc.beginPath(); mc.arc(X(p1.x), Y(p1.y), 3.5, 0, Math.PI*2); mc.fill();
+        }
+      }
+    }
+
     graphHeader.addEventListener("click", () => {
       graphOpen = !graphOpen;
       graphPanel.hidden = !graphOpen;
@@ -1458,6 +1560,7 @@
     function render(){
       populateSeriesSelect();
       if(graphOpen) drawSecGraph();
+      drawSecMap();
 
       // Résultat « entre deux sections »
       const r = between();
