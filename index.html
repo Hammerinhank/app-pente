@@ -473,6 +473,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V29", date:"10 août 2026", changes:[
+      "Remplacement du trait or de V28 (qui n'était pas ce qui était voulu) par un vrai curseur : un segment horizontal or apparaît maintenant en haut du graphique du récapitulatif, à la verticale de la zone couvrant les sections actuellement visibles dans la liste « Sections » défilée juste en dessous. Il se déplace latéralement en temps réel pendant qu'on fait défiler cette liste (liste repliée → aucun curseur)."
+    ]},
     { v:"V28", date:"10 août 2026", changes:[
       "Dans le graphique du récapitulatif des sections : petit trait vertical or ajouté contre l'axe des ordonnées, dont la longueur croît avec le nombre de sections actuellement affichées dans le graphique (repère visuel de densité, plafonné à la hauteur du cadre)."
     ]},
@@ -1290,6 +1293,29 @@
     let mapOpen   = false;
     let lastGraphLayout = null; // repère (pad, xmin, xmax, w) du dernier tracé, pour inverser un clic en distance
     let pendingScrollKey = null; // clé "n|s" à faire défiler en vue dans la liste après le prochain rendu
+    let listScrollRaf = null;    // anti-rebond du redessin du graphique pendant le défilement de la liste
+
+    // Clés "n|s" des sections actuellement visibles dans la liste défilée
+    // (liste repliée → aucune). Sert à positionner le curseur or du graphique.
+    function getVisibleListKeys(){
+      if(listEl.hidden) return [];
+      const items = listEl.querySelectorAll('.sec-item[data-key]');
+      if(!items.length) return [];
+      const contRect = listEl.getBoundingClientRect();
+      const keys = [];
+      items.forEach(li => {
+        const r = li.getBoundingClientRect();
+        if(r.bottom > contRect.top + 1 && r.top < contRect.bottom - 1) keys.push(li.dataset.key);
+      });
+      return keys;
+    }
+    // Redessine le graphique (curseur or) quand la liste défile, si le
+    // graphique est déplié.
+    listEl.addEventListener("scroll", () => {
+      if(!graphOpen) return;
+      if(listScrollRaf) return;
+      listScrollRaf = requestAnimationFrame(() => { listScrollRaf = null; drawSecGraph(); });
+    });
 
     function open(){
       selected = [];
@@ -1403,7 +1429,7 @@
 
     function buildGraphPoints(){
       const secs = filteredSections();
-      if(!secs.length) return { pts:[], info:"Aucune section pour cette sélection.", ranges:new Map(), count:0 };
+      if(!secs.length) return { pts:[], info:"Aucune section pour cette sélection.", ranges:new Map() };
       const ptsOf = e => (e.pts && e.pts.length) ? e.pts : [{ d:0, a:e.a0 }, { d:e.d1-e.d0, a:e.a1 }];
       const ordered = secs.slice().sort((a,b) => a.t - b.t);
       let offset = 0, pts = [], totalDist = 0, totalDz = 0;
@@ -1415,7 +1441,7 @@
         offset += len; totalDist += len; totalDz += (e.a1 - e.a0);
         ranges.set(e.n + "|" + e.s, { x0, x1: offset });
       });
-      return { pts, ranges, count: ordered.length,
+      return { pts, ranges,
         info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
         Math.round(totalDist) + " m · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
     }
@@ -1423,7 +1449,7 @@
     function drawSecGraph(){
       const { w, h } = sizeGraphCanvas(); if(!w) return;
       gc.clearRect(0,0,w,h);
-      const { pts, info, ranges, count } = buildGraphPoints();
+      const { pts, info, ranges } = buildGraphPoints();
       graphInfo.textContent = info;
       lastGraphLayout = null;
       if(pts.length < 2){
@@ -1477,19 +1503,33 @@
       gc.fillText(Math.round(ymax)+" m", pad.l, pad.t+2);
       gc.fillText(Math.round(ymin)+" m", pad.l, h-pad.b-1);
 
-      // Petit trait or contre l'axe des ordonnées : sa longueur croît avec
-      // le nombre de sections actuellement affichées dans le graphique
-      // (échelle simple, plafonnée à la hauteur utile du cadre).
-      const axisAvailH = h - pad.t - pad.b;
-      const axisSegLen = Math.max(6, Math.min(axisAvailH, count * 6));
-      const axisSegX = 3;
-      gc.strokeStyle = css("--amber");
-      gc.lineWidth = 3;
-      gc.lineCap = "round";
-      gc.beginPath();
-      gc.moveTo(axisSegX, h - pad.b);
-      gc.lineTo(axisSegX, h - pad.b - axisSegLen);
-      gc.stroke();
+      // Curseur or : segment horizontal indiquant, sur l'axe des distances
+      // du graphique, la zone correspondant aux sections actuellement
+      // visibles dans la liste défilée juste en dessous. Il se déplace
+      // latéralement quand on fait défiler cette liste.
+      const visKeys = getVisibleListKeys();
+      if(visKeys.length){
+        let rmin = Infinity, rmax = -Infinity;
+        visKeys.forEach(k => {
+          const rr = ranges.get(k);
+          if(!rr) return;
+          if(rr.x0 < rmin) rmin = rr.x0;
+          if(rr.x1 > rmax) rmax = rr.x1;
+        });
+        if(rmin < rmax){
+          const cx0 = X(rmin), cx1 = X(rmax);
+          const cy = pad.t + 3;
+          gc.save();
+          gc.strokeStyle = css("--amber");
+          gc.lineWidth = 4;
+          gc.lineCap = "round";
+          gc.beginPath();
+          gc.moveTo(cx0, cy);
+          gc.lineTo(cx1, cy);
+          gc.stroke();
+          gc.restore();
+        }
+      }
     }
 
     // ---- Carte : vrai fond de carte OpenStreetMap (tuiles raster) avec
@@ -1709,10 +1749,12 @@
       listEl.hidden = !listOpen;
       listHeader.setAttribute("aria-expanded", listOpen ? "true" : "false");
       if(listOpen) renderList();
+      if(graphOpen) requestAnimationFrame(drawSecGraph);
     });
 
     function render(){
       populateSeriesSelect();
+      if(listOpen) renderList();
       if(graphOpen) drawSecGraph();
       if(mapOpen) drawSecMap();
 
@@ -1739,13 +1781,10 @@
       }
 
       secClear.hidden = !sectionLog.some(e => !e.sep);
-      if(listOpen){
-        renderList();
-        if(pendingScrollKey){
-          const li = listEl.querySelector('[data-key="' + pendingScrollKey + '"]');
-          if(li) li.scrollIntoView({ block:"center", behavior:"smooth" });
-          pendingScrollKey = null;
-        }
+      if(listOpen && pendingScrollKey){
+        const li = listEl.querySelector('[data-key="' + pendingScrollKey + '"]');
+        if(li) li.scrollIntoView({ block:"center", behavior:"smooth" });
+        pendingScrollKey = null;
       }
     }
 
