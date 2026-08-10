@@ -472,6 +472,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V25", date:"10 août 2026", changes:[
+      "Correction : toucher le graphique de section ne déplie plus automatiquement la liste « Sections » si elle était repliée. Elle reste repliée quoi qu'il arrive tant que l'usager ne clique pas lui-même sur son titre — seule la barre rouge (et, si la liste est déjà dépliée, son défilement jusqu'à la section) reflète le clic sur le graphique."
+    ]},
     { v:"V24", date:"10 août 2026", changes:[
       "Dans le récapitulatif des sections : quand deux sections sont sélectionnées (pente moyenne), le graphique et la carte affichent désormais une barre/un segment rouge pour CHACUNE des deux, et non plus seulement pour la dernière touchée. Ergonomie revue pour repasser facilement en mode « une seule section » : toucher une section déjà sélectionnée la retire (comme avant) ; et toucher une nouvelle section alors que deux étaient déjà sélectionnées repart directement sur cette seule section, au lieu de faire glisser la paire — un seul geste suffit donc pour revenir au mode simple."
     ]},
@@ -1527,9 +1530,11 @@
     });
 
     // Clic sur le graphique → identifie la section sous le doigt (via le
-    // repère du dernier tracé), la sélectionne comme un toucher dans la
-    // liste (barre rouge + comparaison éventuelle), déplie « Sections » si
-    // besoin et fait défiler la liste jusqu'à elle.
+    // repère du dernier tracé) et la sélectionne comme un toucher dans la
+    // liste (barre rouge + comparaison éventuelle). Si la liste « Sections »
+    // est repliée, elle reste repliée : seul l'usager la déplie lui-même via
+    // son propre titre. Si elle est déjà dépliée, elle défile jusqu'à la
+    // section touchée.
     graphCanvas.addEventListener("click", ev => {
       if(!lastGraphLayout) return;
       const rect = graphCanvas.getBoundingClientRect();
@@ -1548,13 +1553,8 @@
       const sec = filteredSections().find(e => (e.n + "|" + e.s) === hitKey);
       if(!sec) return;
 
-      if(!listOpen){
-        listOpen = true;
-        listEl.hidden = false;
-        listHeader.setAttribute("aria-expanded", "true");
-      }
-      pendingScrollKey = hitKey;
-      toggle(sec);   // met à jour la sélection, redessine et re-rend la liste
+      if(listOpen) pendingScrollKey = hitKey;
+      toggle(sec);   // met à jour la sélection, redessine et re-rend la liste si dépliée
     });
 
     // ---- Liste : sections de la sélection (une série, ou toutes avec
