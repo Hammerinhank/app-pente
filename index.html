@@ -472,6 +472,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V24", date:"10 août 2026", changes:[
+      "Dans le récapitulatif des sections : quand deux sections sont sélectionnées (pente moyenne), le graphique et la carte affichent désormais une barre/un segment rouge pour CHACUNE des deux, et non plus seulement pour la dernière touchée. Ergonomie revue pour repasser facilement en mode « une seule section » : toucher une section déjà sélectionnée la retire (comme avant) ; et toucher une nouvelle section alors que deux étaient déjà sélectionnées repart directement sur cette seule section, au lieu de faire glisser la paire — un seul geste suffit donc pour revenir au mode simple."
+    ]},
     { v:"V23", date:"8 août 2026", changes:[
       "Vraie correction du blocage de défilement (V21/V22 avaient supprimé un rebond de page qui, par accident, permettait de remonter voir le bouton ✕ sur du contenu très long — ce n'était pas un vrai défilement). Les fenêtres (Historique des versions, Méthode 2 points, Sections) ont désormais leur propre défilement interne, indépendant de la page, avec le titre et le bouton ✕ fixés en haut en permanence quel que soit le défilement du contenu."
     ]},
@@ -1227,8 +1230,9 @@
     const graphCanvas = $("secGraphCanvas"), gc = graphCanvas.getContext("2d");
     const mapCanvas = $("secMapCanvas"), mc = mapCanvas.getContext("2d"), mapInfo = $("secMapInfo");
 
-    let selected = [];      // sections choisies (max 2), dans l'ordre du toucher — pour la pente moyenne
-    let lastTouched = null; // dernière section touchée — pour la barre verticale unique sur le graphique
+    let selected = [];      // sections choisies (0, 1 ou 2), dans l'ordre du toucher — pour la
+                             // pente moyenne ET pour les barres/segments rouges (une par section
+                             // sélectionnée : mode simple = 1 barre, mode comparaison = 2 barres)
     let graphOpen = false;
     let listOpen  = false;
     let mapOpen   = false;
@@ -1236,7 +1240,7 @@
     let pendingScrollKey = null; // clé "n|s" à faire défiler en vue dans la liste après le prochain rendu
 
     function open(){
-      selected = []; lastTouched = null;
+      selected = [];
       graphOpen = false; listOpen = false; mapOpen = false;
       graphPanel.hidden = true; listEl.hidden = true; mapPanel.hidden = true;
       graphHeader.setAttribute("aria-expanded","false");
@@ -1255,10 +1259,20 @@
     notifySection = () => { if(!modal.hidden) render(); };
 
     function toggle(sec){
-      lastTouched = sec;
       const i = selected.indexOf(sec);
-      if(i >= 0) selected.splice(i, 1);
-      else { selected.push(sec); if(selected.length > 2) selected.shift(); }
+      if(i >= 0){
+        // Section déjà sélectionnée → on la retire (permet, depuis le mode
+        // comparaison à 2 sections, de revenir au mode simple à 1 section).
+        selected.splice(i, 1);
+      } else if(selected.length >= 2){
+        // Deux sections déjà en surbrillance → toucher une section NOUVELLE
+        // repart directement en mode simple avec cette seule section, plutôt
+        // que de faire glisser la paire. Un seul geste suffit pour revenir
+        // au mode « une seule section visualisée ».
+        selected = [sec];
+      } else {
+        selected.push(sec);
+      }
       render();
     }
 
@@ -1322,7 +1336,7 @@
     // le font (voir les gestionnaires *Header ci-dessous). Ici on se
     // contente donc de réinitialiser la sélection (obsolète d'une série à
     // l'autre) puis de redessiner ce qui est déjà déplié.
-    seriesSelect.addEventListener("change", () => { selected = []; lastTouched = null; render(); });
+    seriesSelect.addEventListener("change", () => { selected = []; render(); });
 
     // ---- Graphique : courbe d'altitude de toutes les sections de la
     // sélection (une série, ou toutes), enchaînées chronologiquement.
@@ -1390,19 +1404,20 @@
       for(const p of pts) gc.lineTo(X(p.x), Y(p.y));
       gc.strokeStyle = css("--teal"); gc.lineWidth = 2; gc.lineJoin = "round"; gc.stroke();
 
-      // Barre verticale rouge vif : UNE seule, celle de la dernière section
-      // touchée dans la liste (la précédente est oubliée dès qu'on en touche
-      // une autre) — fine et lumineuse pour bien ressortir sur la courbe.
-      if(lastTouched){
-        const range = ranges.get(lastTouched.n + "|" + lastTouched.s);
-        if(range){
+      // Barre(s) verticale(s) rouge vif : une par section sélectionnée — une
+      // seule en mode simple, deux en mode comparaison — fines et lumineuses
+      // pour bien ressortir sur la courbe.
+      if(selected.length){
+        gc.save();
+        gc.shadowColor = "#FF3B30"; gc.shadowBlur = 8;
+        gc.strokeStyle = "#FF3B30"; gc.lineWidth = 2; gc.lineCap = "round";
+        selected.forEach(sec => {
+          const range = ranges.get(sec.n + "|" + sec.s);
+          if(!range) return;
           const bx = X((range.x0 + range.x1) / 2);
-          gc.save();
-          gc.shadowColor = "#FF3B30"; gc.shadowBlur = 8;
-          gc.strokeStyle = "#FF3B30"; gc.lineWidth = 2; gc.lineCap = "round";
           gc.beginPath(); gc.moveTo(bx, pad.t); gc.lineTo(bx, h-pad.b); gc.stroke();
-          gc.restore();
-        }
+        });
+        gc.restore();
       }
 
       gc.fillStyle = css("--muted"); gc.font = "10px ui-monospace,monospace"; gc.textAlign = "left";
@@ -1412,7 +1427,7 @@
 
     // ---- Carte : parcours (lat/lon) des sections de la sélection courante,
     // avec un segment rouge vif reliant début et fin de la section
-    // actuellement mise en évidence (lastTouched) — même logique que la
+    // actuellement sélectionnée(s) (une ou deux) — même logique que la
     // barre verticale du graphique. Projection équirectangulaire locale
     // (pas de fond de carte téléchargé, cohérent avec le fonctionnement
     // hors ligne de l'app) : la longitude est mise à l'échelle par
@@ -1480,21 +1495,21 @@
       const pEnd = proj(segs[segs.length-1].lat1, segs[segs.length-1].lon1);
       mc.beginPath(); mc.arc(X(pEnd.x), Y(pEnd.y), 2, 0, Math.PI*2); mc.fill();
 
-      // Segment rouge vif : section actuellement mise en évidence
-      if(lastTouched){
-        const sec = segs.find(s => s.key === (lastTouched.n + "|" + lastTouched.s));
-        if(sec){
-          const p0 = proj(sec.lat0, sec.lon0), p1 = proj(sec.lat1, sec.lon1);
-          mc.save();
-          mc.shadowColor = "#FF3B30"; mc.shadowBlur = 8;
-          mc.strokeStyle = "#FF3B30"; mc.lineWidth = 3; mc.lineCap = "round";
-          mc.beginPath(); mc.moveTo(X(p0.x), Y(p0.y)); mc.lineTo(X(p1.x), Y(p1.y)); mc.stroke();
-          mc.restore();
-          mc.fillStyle = "#FF3B30";
-          mc.beginPath(); mc.arc(X(p0.x), Y(p0.y), 3.5, 0, Math.PI*2); mc.fill();
-          mc.beginPath(); mc.arc(X(p1.x), Y(p1.y), 3.5, 0, Math.PI*2); mc.fill();
-        }
-      }
+      // Segment(s) rouge vif : une par section sélectionnée — une seule en
+      // mode simple, deux en mode comparaison.
+      selected.forEach(lt => {
+        const sec = segs.find(s => s.key === (lt.n + "|" + lt.s));
+        if(!sec) return;
+        const p0 = proj(sec.lat0, sec.lon0), p1 = proj(sec.lat1, sec.lon1);
+        mc.save();
+        mc.shadowColor = "#FF3B30"; mc.shadowBlur = 8;
+        mc.strokeStyle = "#FF3B30"; mc.lineWidth = 3; mc.lineCap = "round";
+        mc.beginPath(); mc.moveTo(X(p0.x), Y(p0.y)); mc.lineTo(X(p1.x), Y(p1.y)); mc.stroke();
+        mc.restore();
+        mc.fillStyle = "#FF3B30";
+        mc.beginPath(); mc.arc(X(p0.x), Y(p0.y), 3.5, 0, Math.PI*2); mc.fill();
+        mc.beginPath(); mc.arc(X(p1.x), Y(p1.y), 3.5, 0, Math.PI*2); mc.fill();
+      });
     }
 
     graphHeader.addEventListener("click", () => {
@@ -1539,7 +1554,7 @@
         listHeader.setAttribute("aria-expanded", "true");
       }
       pendingScrollKey = hitKey;
-      toggle(sec);   // met à jour selected/lastTouched, redessine et re-rend la liste
+      toggle(sec);   // met à jour la sélection, redessine et re-rend la liste
     });
 
     // ---- Liste : sections de la sélection (une série, ou toutes avec
@@ -1653,7 +1668,7 @@
       clearTimeout(clearTimer); clearArmed = false;
       secClear.textContent = "Effacer l'historique";
       sectionLog.length = 0; curSeries = 0; persistSections();
-      selected = []; lastTouched = null;
+      selected = [];
       render();
     });
 
