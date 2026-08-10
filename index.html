@@ -473,6 +473,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V27", date:"10 août 2026", changes:[
+      "Correction : refermer le graphique du récapitulatif des sections efface désormais la sélection en cours. En le rouvrant, plus aucune barre verticale rouge ne réapparaît tant qu'aucune section n'a été retouchée (la sélection est aussi effacée dans la liste et sur la carte, puisqu'elle est partagée entre les trois vues)."
+    ]},
     { v:"V26", date:"10 août 2026", changes:[
       "La carte du récapitulatif des sections affiche désormais un vrai fond de carte (tuiles OpenStreetMap) sous le tracé du parcours et le(s) segment(s) rouge(s) de la sélection, au lieu d'une simple projection sur fond vide. Cette fonctionnalité nécessite une connexion internet pour charger les tuiles et leur transmet les coordonnées approximatives affichées ; attribution « © OpenStreetMap contributors » visible sur la carte. Le pied de page de l'app précise désormais cette exception au fonctionnement hors ligne."
     ]},
@@ -1582,7 +1585,16 @@
       graphOpen = !graphOpen;
       graphPanel.hidden = !graphOpen;
       graphHeader.setAttribute("aria-expanded", graphOpen ? "true" : "false");
-      if(graphOpen) requestAnimationFrame(drawSecGraph);
+      if(graphOpen){
+        requestAnimationFrame(drawSecGraph);
+      } else {
+        // En refermant le graphique, on efface la sélection : à la
+        // prochaine ouverture, plus aucune barre verticale rouge ne doit
+        // rester affichée (le repli/dépli des autres panneaux — liste,
+        // carte — n'est pas affecté par ailleurs).
+        selected = [];
+        render();
+      }
     });
 
     mapHeader.addEventListener("click", () => {
