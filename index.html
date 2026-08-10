@@ -473,6 +473,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V28", date:"10 août 2026", changes:[
+      "Dans le graphique du récapitulatif des sections : petit trait vertical or ajouté contre l'axe des ordonnées, dont la longueur croît avec le nombre de sections actuellement affichées dans le graphique (repère visuel de densité, plafonné à la hauteur du cadre)."
+    ]},
     { v:"V27", date:"10 août 2026", changes:[
       "Correction : refermer le graphique du récapitulatif des sections efface désormais la sélection en cours. En le rouvrant, plus aucune barre verticale rouge ne réapparaît tant qu'aucune section n'a été retouchée (la sélection est aussi effacée dans la liste et sur la carte, puisqu'elle est partagée entre les trois vues)."
     ]},
@@ -1400,7 +1403,7 @@
 
     function buildGraphPoints(){
       const secs = filteredSections();
-      if(!secs.length) return { pts:[], info:"Aucune section pour cette sélection.", ranges:new Map() };
+      if(!secs.length) return { pts:[], info:"Aucune section pour cette sélection.", ranges:new Map(), count:0 };
       const ptsOf = e => (e.pts && e.pts.length) ? e.pts : [{ d:0, a:e.a0 }, { d:e.d1-e.d0, a:e.a1 }];
       const ordered = secs.slice().sort((a,b) => a.t - b.t);
       let offset = 0, pts = [], totalDist = 0, totalDz = 0;
@@ -1412,14 +1415,15 @@
         offset += len; totalDist += len; totalDz += (e.a1 - e.a0);
         ranges.set(e.n + "|" + e.s, { x0, x1: offset });
       });
-      return { pts, ranges, info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
+      return { pts, ranges, count: ordered.length,
+        info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
         Math.round(totalDist) + " m · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
     }
 
     function drawSecGraph(){
       const { w, h } = sizeGraphCanvas(); if(!w) return;
       gc.clearRect(0,0,w,h);
-      const { pts, info, ranges } = buildGraphPoints();
+      const { pts, info, ranges, count } = buildGraphPoints();
       graphInfo.textContent = info;
       lastGraphLayout = null;
       if(pts.length < 2){
@@ -1472,6 +1476,20 @@
       gc.fillStyle = css("--muted"); gc.font = "10px ui-monospace,monospace"; gc.textAlign = "left";
       gc.fillText(Math.round(ymax)+" m", pad.l, pad.t+2);
       gc.fillText(Math.round(ymin)+" m", pad.l, h-pad.b-1);
+
+      // Petit trait or contre l'axe des ordonnées : sa longueur croît avec
+      // le nombre de sections actuellement affichées dans le graphique
+      // (échelle simple, plafonnée à la hauteur utile du cadre).
+      const axisAvailH = h - pad.t - pad.b;
+      const axisSegLen = Math.max(6, Math.min(axisAvailH, count * 6));
+      const axisSegX = 3;
+      gc.strokeStyle = css("--amber");
+      gc.lineWidth = 3;
+      gc.lineCap = "round";
+      gc.beginPath();
+      gc.moveTo(axisSegX, h - pad.b);
+      gc.lineTo(axisSegX, h - pad.b - axisSegLen);
+      gc.stroke();
     }
 
     // ---- Carte : vrai fond de carte OpenStreetMap (tuiles raster) avec
