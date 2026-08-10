@@ -383,6 +383,7 @@
 
 <footer>
   Mesure hors ligne, aucune donnée transmise. À héberger en <code>https</code> (obligatoire pour le GPS sur iPhone).
+  La carte du récapitulatif des sections fait exception : elle charge des tuiles OpenStreetMap par internet et leur transmet les coordonnées approximatives des sections affichées.
 </footer>
 
 <!-- Fenêtre d'information de version -->
@@ -472,6 +473,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V26", date:"10 août 2026", changes:[
+      "La carte du récapitulatif des sections affiche désormais un vrai fond de carte (tuiles OpenStreetMap) sous le tracé du parcours et le(s) segment(s) rouge(s) de la sélection, au lieu d'une simple projection sur fond vide. Cette fonctionnalité nécessite une connexion internet pour charger les tuiles et leur transmet les coordonnées approximatives affichées ; attribution « © OpenStreetMap contributors » visible sur la carte. Le pied de page de l'app précise désormais cette exception au fonctionnement hors ligne."
+    ]},
     { v:"V25", date:"10 août 2026", changes:[
       "Correction : toucher le graphique de section ne déplie plus automatiquement la liste « Sections » si elle était repliée. Elle reste repliée quoi qu'il arrive tant que l'usager ne clique pas lui-même sur son titre — seule la barre rouge (et, si la liste est déjà dépliée, son défilement jusqu'à la section) reflète le clic sur le graphique."
     ]},
@@ -1214,6 +1218,45 @@
   })();
 
   // ============================================================
+  //  TUILES OPENSTREETMAP — utilitaires de projection Web Mercator
+  //  et cache d'images de tuiles, réutilisés par le module Sections
+  //  pour dessiner un vrai fond de carte sous le parcours.
+  // ============================================================
+  const OSM_TILE_SIZE = 256;
+  function lon2worldX(lon, zoom){ return (lon + 180) / 360 * OSM_TILE_SIZE * Math.pow(2, zoom); }
+  function lat2worldY(lat, zoom){
+    const latRad = lat * Math.PI / 180;
+    return (1 - Math.log(Math.tan(latRad) + 1/Math.cos(latRad)) / Math.PI) / 2 * OSM_TILE_SIZE * Math.pow(2, zoom);
+  }
+  const osmTileCache = new Map();   // clé "z/x/y" → { img, loaded, error }
+  function osmGetTile(z, x, y, onReady){
+    const n = Math.pow(2, z);
+    if(y < 0 || y >= n) return null;             // hors des pôles
+    x = ((x % n) + n) % n;                        // le monde boucle en longitude
+    const key = z + "/" + x + "/" + y;
+    let entry = osmTileCache.get(key);
+    if(!entry){
+      const img = new Image();
+      entry = { img, loaded:false, error:false };
+      osmTileCache.set(key, entry);
+      img.onload  = () => { entry.loaded = true;  if(onReady) onReady(); };
+      img.onerror = () => { entry.error  = true; };
+      img.src = "https://tile.openstreetmap.org/" + z + "/" + x + "/" + y + ".png";
+    }
+    return entry;
+  }
+  // Choisit le plus grand niveau de zoom pour lequel la zone lat/lon tient
+  // dans le canevas disponible (avec une marge), plafonné à un intervalle
+  // raisonnable de tuiles.
+  function osmPickZoom(latMin, latMax, lonMin, lonMax, availW, availH){
+    const dx0 = Math.max(1e-9, (lonMax - lonMin) / 360) * OSM_TILE_SIZE;
+    const y0a = lat2worldY(latMin, 0), y0b = lat2worldY(latMax, 0);
+    const dy0 = Math.max(1e-9, Math.abs(y0a - y0b));
+    let zoom = Math.floor(Math.min(Math.log2(Math.max(10,availW) / dx0), Math.log2(Math.max(10,availH) / dy0)));
+    return Math.max(2, Math.min(17, zoom));
+  }
+
+  // ============================================================
   //  RÉCAPITULATIF DES SECTIONS DE 100 m.
   //  La combo sélectionne une SÉRIE (identifiée par sa date de début et
   //  son nombre de sections, comme dans les séparateurs de la liste) ou
@@ -1428,13 +1471,12 @@
       gc.fillText(Math.round(ymin)+" m", pad.l, h-pad.b-1);
     }
 
-    // ---- Carte : parcours (lat/lon) des sections de la sélection courante,
-    // avec un segment rouge vif reliant début et fin de la section
-    // actuellement sélectionnée(s) (une ou deux) — même logique que la
-    // barre verticale du graphique. Projection équirectangulaire locale
-    // (pas de fond de carte téléchargé, cohérent avec le fonctionnement
-    // hors ligne de l'app) : la longitude est mise à l'échelle par
-    // cos(latitude moyenne) pour ne pas déformer le tracé.
+    // ---- Carte : vrai fond de carte OpenStreetMap (tuiles raster) avec
+    // superposition du parcours (lat/lon) des sections de la sélection
+    // courante, et un segment rouge vif reliant début et fin de la (ou des
+    // deux) section(s) actuellement sélectionnée(s) — même logique que la
+    // barre verticale du graphique. Projection Web Mercator standard (celle
+    // des tuiles OSM), zoom choisi automatiquement pour cadrer le parcours.
     function sizeMapCanvas(){
       const dpr = Math.min(window.devicePixelRatio||1, 3);
       const r = mapCanvas.getBoundingClientRect();
@@ -1449,7 +1491,7 @@
       if(!secs.length) return { segs:[], info:"Aucune localisation enregistrée pour cette sélection." };
       const ordered = secs.slice().sort((a,b) => a.t - b.t);
       const segs = ordered.map(e => ({ lat0:e.lat0, lon0:e.lon0, lat1:e.lat1, lon1:e.lon1, key:e.n+"|"+e.s }));
-      return { segs, info: ordered.length + " section" + (ordered.length>1?"s":"") + " localisée" + (ordered.length>1?"s":"") };
+      return { segs, info: ordered.length + " section" + (ordered.length>1?"s":"") + " localisée" + (ordered.length>1?"s":"") + " · fond de carte © OpenStreetMap contributors" };
     }
 
     function drawSecMap(){
@@ -1465,54 +1507,75 @@
 
       const lats = [], lons = [];
       segs.forEach(s => { lats.push(s.lat0, s.lat1); lons.push(s.lon0, s.lon1); });
-      const latMid = lats.reduce((a,b)=>a+b,0) / lats.length;
-      const cosLat = Math.max(0.2, Math.cos(latMid * Math.PI/180));
-      const proj = (lat,lon) => ({ x: lon*cosLat, y: lat });
+      const latMin = Math.min(...lats), latMax = Math.max(...lats);
+      const lonMin = Math.min(...lons), lonMax = Math.max(...lons);
+      const pad = 26;   // marge en pixels autour du parcours
 
-      const pts = [];
-      segs.forEach(s => { pts.push(proj(s.lat0,s.lon0)); pts.push(proj(s.lat1,s.lon1)); });
-      const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
-      const xmin=Math.min(...xs), xmax=Math.max(...xs);
-      const ymin=Math.min(...ys), ymax=Math.max(...ys);
-      const pad = { l:12, r:12, t:12, b:12 };
-      const spanX = Math.max(xmax-xmin, 1e-7), spanY = Math.max(ymax-ymin, 1e-7);
-      const scale = Math.min((w-pad.l-pad.r)/spanX, (h-pad.t-pad.b)/spanY);
-      const cx = (xmin+xmax)/2, cy = (ymin+ymax)/2;
-      const X = x => w/2 + (x-cx)*scale;
-      const Y = y => h/2 - (y-cy)*scale;   // nord vers le haut
+      const zoom = osmPickZoom(latMin, latMax, lonMin, lonMax, w - pad*2, h - pad*2);
 
-      // Parcours de base, discret
-      mc.strokeStyle = css("--teal"); mc.lineWidth = 2.5; mc.lineJoin = "round"; mc.lineCap = "round";
+      // Centre du parcours en pixels "monde" à ce niveau de zoom
+      const wx0 = lon2worldX(lonMin, zoom), wx1 = lon2worldX(lonMax, zoom);
+      const wy0 = lat2worldY(latMax, zoom), wy1 = lat2worldY(latMin, zoom); // lat max → y le plus petit
+      const centerWX = (wx0 + wx1) / 2, centerWY = (wy0 + wy1) / 2;
+      const offsetX = centerWX - w/2, offsetY = centerWY - h/2;
+
+      const X = lon => lon2worldX(lon, zoom) - offsetX;
+      const Y = lat => lat2worldY(lat, zoom) - offsetY;
+
+      // ---- Fond : tuiles OSM couvrant la zone visible ----
+      const n = Math.pow(2, zoom);
+      const txMin = Math.max(0, Math.floor(offsetX / OSM_TILE_SIZE));
+      const txMax = Math.min(n-1, Math.floor((offsetX + w) / OSM_TILE_SIZE));
+      const tyMin = Math.max(0, Math.floor(offsetY / OSM_TILE_SIZE));
+      const tyMax = Math.min(n-1, Math.floor((offsetY + h) / OSM_TILE_SIZE));
+      mc.fillStyle = css("--surface-2");
+      mc.fillRect(0, 0, w, h);
+      for(let tx = txMin; tx <= txMax; tx++){
+        for(let ty = tyMin; ty <= tyMax; ty++){
+          const entry = osmGetTile(zoom, tx, ty, () => { if(!mapPanel.hidden) drawSecMap(); });
+          const dx = tx*OSM_TILE_SIZE - offsetX, dy = ty*OSM_TILE_SIZE - offsetY;
+          if(entry && entry.loaded){
+            mc.drawImage(entry.img, dx, dy, OSM_TILE_SIZE, OSM_TILE_SIZE);
+          }
+        }
+      }
+
+      // ---- Parcours de base, discret ----
+      mc.strokeStyle = css("--teal"); mc.lineWidth = 3; mc.lineJoin = "round"; mc.lineCap = "round";
+      mc.save(); mc.globalAlpha = 0.85;
       mc.beginPath();
-      segs.forEach(s => {
-        const p0 = proj(s.lat0,s.lon0), p1 = proj(s.lat1,s.lon1);
-        mc.moveTo(X(p0.x), Y(p0.y)); mc.lineTo(X(p1.x), Y(p1.y));
-      });
+      segs.forEach(s => { mc.moveTo(X(s.lon0), Y(s.lat0)); mc.lineTo(X(s.lon1), Y(s.lat1)); });
       mc.stroke();
+      mc.restore();
 
       mc.fillStyle = css("--teal");
-      segs.forEach(s => {
-        const p0 = proj(s.lat0,s.lon0);
-        mc.beginPath(); mc.arc(X(p0.x), Y(p0.y), 2, 0, Math.PI*2); mc.fill();
-      });
-      const pEnd = proj(segs[segs.length-1].lat1, segs[segs.length-1].lon1);
-      mc.beginPath(); mc.arc(X(pEnd.x), Y(pEnd.y), 2, 0, Math.PI*2); mc.fill();
+      segs.forEach(s => { mc.beginPath(); mc.arc(X(s.lon0), Y(s.lat0), 2.5, 0, Math.PI*2); mc.fill(); });
+      const lastSeg = segs[segs.length-1];
+      mc.beginPath(); mc.arc(X(lastSeg.lon1), Y(lastSeg.lat1), 2.5, 0, Math.PI*2); mc.fill();
 
-      // Segment(s) rouge vif : une par section sélectionnée — une seule en
-      // mode simple, deux en mode comparaison.
+      // ---- Segment(s) rouge vif : une par section sélectionnée ----
       selected.forEach(lt => {
         const sec = segs.find(s => s.key === (lt.n + "|" + lt.s));
         if(!sec) return;
-        const p0 = proj(sec.lat0, sec.lon0), p1 = proj(sec.lat1, sec.lon1);
         mc.save();
         mc.shadowColor = "#FF3B30"; mc.shadowBlur = 8;
-        mc.strokeStyle = "#FF3B30"; mc.lineWidth = 3; mc.lineCap = "round";
-        mc.beginPath(); mc.moveTo(X(p0.x), Y(p0.y)); mc.lineTo(X(p1.x), Y(p1.y)); mc.stroke();
+        mc.strokeStyle = "#FF3B30"; mc.lineWidth = 4; mc.lineCap = "round";
+        mc.beginPath(); mc.moveTo(X(sec.lon0), Y(sec.lat0)); mc.lineTo(X(sec.lon1), Y(sec.lat1)); mc.stroke();
         mc.restore();
         mc.fillStyle = "#FF3B30";
-        mc.beginPath(); mc.arc(X(p0.x), Y(p0.y), 3.5, 0, Math.PI*2); mc.fill();
-        mc.beginPath(); mc.arc(X(p1.x), Y(p1.y), 3.5, 0, Math.PI*2); mc.fill();
+        mc.beginPath(); mc.arc(X(sec.lon0), Y(sec.lat0), 4, 0, Math.PI*2); mc.fill();
+        mc.beginPath(); mc.arc(X(sec.lon1), Y(sec.lat1), 4, 0, Math.PI*2); mc.fill();
       });
+
+      // ---- Attribution obligatoire (licence ODbL des données OpenStreetMap) ----
+      mc.font = "10px ui-monospace,monospace";
+      const attrTxt = "© OpenStreetMap contributors";
+      const attrW = mc.measureText(attrTxt).width;
+      mc.fillStyle = "rgba(11,16,18,.72)";
+      mc.fillRect(w - attrW - 12, h - 18, attrW + 8, 14);
+      mc.fillStyle = "#E8F1EE";
+      mc.textAlign = "left";
+      mc.fillText(attrTxt, w - attrW - 8, h - 7);
     }
 
     graphHeader.addEventListener("click", () => {
