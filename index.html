@@ -424,6 +424,7 @@
 
     <div class="dn-sub">Série</div>
     <select id="secSeriesSelect" class="sec-graph-select"></select>
+    <button id="secDeleteSeries" class="dn-clear" type="button" hidden>Supprimer cette série</button>
 
     <div id="secResult" class="sec-result" hidden></div>
     <div id="secHint" class="dn-hint"></div>
@@ -1279,6 +1280,7 @@
     const openBtn  = $("secOpen"), modal = $("secModal"), closeBtn = $("secClose");
     const listEl   = $("secList"), resultEl = $("secResult"), hintEl = $("secHint"), secClear = $("secClear");
     const seriesSelect = $("secSeriesSelect");
+    const deleteSeriesBtn = $("secDeleteSeries");
     const graphHeader = $("secGraphHeader"), graphPanel = $("secGraphPanel"), graphInfo = $("secGraphInfo");
     const listHeader  = $("secListHeader");
     const mapHeader = $("secMapHeader"), mapPanel = $("secMapPanel");
@@ -1340,7 +1342,7 @@
       const i = selected.indexOf(sec);
       if(i >= 0){
         // Section déjà sélectionnée → on la retire (permet, depuis le mode
-        // comparaison à 2 sections, de revenir au mode simple à 1 section).
+        // comparaison à 2 sections, de revenir au mode simple).
         selected.splice(i, 1);
       } else if(selected.length >= 2){
         // Deux sections déjà en surbrillance → toucher une section NOUVELLE
@@ -1399,6 +1401,7 @@
       const values = Array.from(seriesSelect.options).map(o => o.value);
       if(values.includes(prevVal)) seriesSelect.value = prevVal;
       else seriesSelect.value = metas.length ? String(metas[0].id) : "all";
+      deleteSeriesBtn.hidden = (seriesSelect.value === "all");
     }
 
     function filteredSections(){
@@ -1414,7 +1417,62 @@
     // le font (voir les gestionnaires *Header ci-dessous). Ici on se
     // contente donc de réinitialiser la sélection (obsolète d'une série à
     // l'autre) puis de redessiner ce qui est déjà déplié.
-    seriesSelect.addEventListener("change", () => { selected = []; render(); });
+    seriesSelect.addEventListener("change", () => {
+      selected = [];
+      deleteSeriesBtn.hidden = (seriesSelect.value === "all");
+      resetDeleteArm();
+      render();
+    });
+
+    // ---- Suppression d'une série entière ----
+    // Retire du récapitulatif persistant toutes les sections appartenant à
+    // la série choisie dans la combo, puis nettoie les séparateurs de série
+    // devenus incohérents (en tête, en fin, ou consécutifs) pour que la
+    // liste « Toutes les séries » reste lisible.
+    function cleanupSeparators(){
+      // En tête : un séparateur sans aucune série avant lui n'a plus de sens.
+      while(sectionLog.length && sectionLog[0].sep) sectionLog.splice(0, 1);
+      // En fin : idem, plus aucune série après lui.
+      while(sectionLog.length && sectionLog[sectionLog.length - 1].sep) sectionLog.splice(sectionLog.length - 1, 1);
+      // Séparateurs consécutifs au milieu (série intermédiaire entièrement
+      // supprimée) : on les fusionne en un seul, qui relie la fin de la
+      // série précédente restante au début de la série suivante restante.
+      for(let i = sectionLog.length - 2; i >= 0; i--){
+        if(sectionLog[i].sep && sectionLog[i+1].sep){
+          sectionLog[i].nextStart = sectionLog[i+1].nextStart;
+          sectionLog.splice(i+1, 1);
+        }
+      }
+    }
+
+    function deleteSeries(id){
+      for(let i = sectionLog.length - 1; i >= 0; i--){
+        if(!sectionLog[i].sep && sectionLog[i].s === id) sectionLog.splice(i, 1);
+      }
+      cleanupSeparators();
+      persistSections();
+      selected = [];
+    }
+
+    let deleteArmed = false, deleteTimer = null;
+    function resetDeleteArm(){
+      deleteArmed = false;
+      clearTimeout(deleteTimer);
+      deleteSeriesBtn.textContent = "Supprimer cette série";
+    }
+    deleteSeriesBtn.addEventListener("click", () => {
+      if(seriesSelect.value === "all") return;
+      if(!deleteArmed){
+        deleteArmed = true;
+        deleteSeriesBtn.textContent = "Confirmer la suppression de cette série ?";
+        deleteTimer = setTimeout(resetDeleteArm, 3500);
+        return;
+      }
+      clearTimeout(deleteTimer);
+      resetDeleteArm();
+      deleteSeries(parseInt(seriesSelect.value, 10));
+      render();
+    });
 
     // ---- Graphique : courbe d'altitude de toutes les sections de la
     // sélection (une série, ou toutes), enchaînées chronologiquement.
