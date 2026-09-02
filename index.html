@@ -232,6 +232,27 @@
   .toggle[data-on="true"] .dot{background:var(--amber);box-shadow:0 0 0 4px var(--amber-dim);animation:pulse 1.6s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
+  /* Bascule Auto / Avion */
+  .mode-toggle{
+    appearance:none;border:0;background:transparent;padding:0;width:100%;cursor:pointer;
+  }
+  .mode-toggle:disabled{opacity:.5;cursor:not-allowed}
+  .mode-track{
+    position:relative;display:flex;border:1px solid var(--line);border-radius:14px;
+    background:var(--surface);overflow:hidden;
+  }
+  .mode-knob{
+    position:absolute;top:3px;bottom:3px;left:3px;width:calc(50% - 6px);z-index:0;
+    border-radius:11px;background:var(--amber-dim);border:1px solid var(--amber);
+    transition:left .22s ease;
+  }
+  .mode-opt{
+    position:relative;z-index:1;flex:1;text-align:center;padding:13px 10px;
+    font-size:14px;font-weight:700;letter-spacing:.02em;color:var(--muted);
+    transition:color .18s;
+  }
+  .mode-opt.active{color:var(--amber)}
+
   /* Zone de mesure */
   .zone{display:none;flex-direction:column;gap:16px}
   .zone.open{display:flex;animation:reveal .28s ease}
@@ -302,6 +323,13 @@
       <span class="info" aria-hidden="true">i</span>
     </button>
   </div>
+  <button id="modeToggle" class="mode-toggle" type="button">
+    <span class="mode-track">
+      <span id="modeKnob" class="mode-knob"></span>
+      <span class="mode-opt" data-mode="auto">🚗 Auto</span>
+      <span class="mode-opt" data-mode="avion">✈️ Avion</span>
+    </span>
+  </button>
   <button id="toggle" class="toggle" data-on="false" aria-pressed="false">
     <span class="dot"></span>
     <span id="toggleLabel">Mesurer la pente</span>
@@ -312,7 +340,7 @@
   </button>
   <button id="secOpen" class="toggle2" type="button">
     <span class="ic" aria-hidden="true"></span>
-    <span>Sections 100 m · récapitulatif</span>
+    <span>Sections · récapitulatif</span>
   </button>
 </header>
 
@@ -334,7 +362,7 @@
     <div class="prog">
       <div class="prog-row">
         <span>Progression vers le prochain point</span>
-        <span><span id="dist" class="mono">0</span> / 100 m</span>
+        <span><span id="dist" class="mono">0 m</span> / <span id="distTarget" class="mono">100 m</span></span>
       </div>
       <div class="track"><div id="fill" class="fill"></div></div>
     </div>
@@ -417,10 +445,10 @@
 <div id="secModal" class="modal" hidden>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="secTitle">
     <div class="modal-head">
-      <span id="secTitle" class="modal-title">Sections de 100 m</span>
+      <span id="secTitle" class="modal-title">Sections verrouillées</span>
       <button id="secClose" class="modal-close" type="button" aria-label="Fermer">✕</button>
     </div>
-    <p class="dn-intro">Chaque section de 100 m verrouillée par la mesure automatique apparaît ici avec sa pente. Choisissez une série ci-dessous (ou « Toutes les séries »), puis dépliez « Graphique » et/ou « Sections ». Dans la liste, touchez <b>deux</b> sections pour obtenir la pente moyenne entre elles.</p>
+    <p class="dn-intro">Chaque section verrouillée par la mesure automatique (longueur selon le mode choisi, Auto ou Avion) apparaît ici avec sa pente. Choisissez une série ci-dessous (ou « Toutes les séries »), puis dépliez « Graphique » et/ou « Sections ». Dans la liste, touchez <b>deux</b> sections pour obtenir la pente moyenne entre elles.</p>
 
     <div class="dn-sub">Série</div>
     <select id="secSeriesSelect" class="sec-graph-select"></select>
@@ -462,7 +490,7 @@
   // ---- Éléments ----
   const toggle = $("toggle"), toggleLabel = $("toggleLabel"), zone = $("zone");
   const badge = $("badge"), arrowEl = $("arrow"), numEl = $("num"), dirEl = $("dir");
-  const distEl = $("dist"), fillEl = $("fill");
+  const distEl = $("dist"), distTargetEl = $("distTarget"), fillEl = $("fill");
   const altEl = $("alt"), dzEl = $("dz"), accEl = $("acc"), statusEl = $("status");
   const histCanvas = $("histChart"), zoomCanvas = $("zoomChart");
 
@@ -474,6 +502,9 @@
   //  Le badge, le titre de l'onglet et la fiche d'info en découlent seuls.
   // ===================================================================
   const HISTORY = [
+    { v:"V30", date:"2 septembre 2026", changes:[
+      "Nouveau bouton bascule « Auto / Avion » en haut de l'écran, pour choisir le mode de mesure. En mode Avion, les distances de la mesure automatique (longueur des sections verrouillées, seuils anti-bruit) sont adaptées à la vitesse d'un avion, bien supérieure à celle d'une voiture ou d'un piéton : sections de 2 km au lieu de 100 m, seuils de bruit relevés dans la même proportion. Le mode choisi est mémorisé d'une session à l'autre et ne peut pas être changé pendant qu'une mesure est en cours (le bouton se désactive). Les distances affichées (progression, récapitulatif des sections) passent automatiquement en kilomètres au-delà de 1000 m."
+    ]},
     { v:"V29", date:"10 août 2026", changes:[
       "Remplacement du trait or de V28 (qui n'était pas ce qui était voulu) par un vrai curseur : un segment horizontal or apparaît maintenant en haut du graphique du récapitulatif, à la verticale de la zone couvrant les sections actuellement visibles dans la liste « Sections » défilée juste en dessous. Il se déplace latéralement en temps réel pendant qu'on fait défiler cette liste (liste repliée → aucun curseur)."
     ]},
@@ -599,12 +630,44 @@
   // Seul le bouton « ✕ » referme cette fenêtre : ni le clic hors carte, ni
   // la touche Échap ne doivent y ramener au menu principal.
 
-  const TRIGGER = 100;   // distance PARCOURUE (m) déclenchant un nouveau point de référence
-  const SHOW_MIN_D = 15; // recul mini (m) avant d'envisager d'afficher une pente
+  // ---- Mode de mesure : Auto (voiture / marche) ou Avion. Le mode fixe
+  // l'échelle des distances utilisées par la mesure automatique (longueur
+  // des sections, seuils anti-bruit) : un avion parcourt en quelques
+  // secondes ce qu'une voiture met plusieurs minutes à couvrir, les mêmes
+  // seuils en mètres n'ont donc aucun sens dans les deux cas. Mémorisé
+  // d'une session à l'autre ; ne peut pas changer pendant une mesure en
+  // cours (bouton désactivé, voir start()/stop()).
+  const MODES = {
+    auto:  { label:"Auto",  TRIGGER:100,  SHOW_MIN_D:15,  STEP_MIN:5,   SPEED_MIN:0.6 },
+    avion: { label:"Avion", TRIGGER:2000, SHOW_MIN_D:300, STEP_MIN:100, SPEED_MIN:20  }
+  };
+  const MODE_STORE = "pente.mode.v1";
+  let mode = "auto";
+  try{ const saved = localStorage.getItem(MODE_STORE); if(saved === "avion") mode = "avion"; }catch(e){}
+
+  function formatDist(m){
+    if(m >= 1000) return (m/1000).toFixed(1).replace(/\.0$/,"") + " km";
+    return Math.round(m) + " m";
+  }
+
+  const modeToggleBtn = $("modeToggle"), modeKnob = $("modeKnob");
+  function updateModeUI(){
+    modeToggleBtn.querySelectorAll(".mode-opt").forEach(el => {
+      el.classList.toggle("active", el.dataset.mode === mode);
+    });
+    modeKnob.style.left = mode === "auto" ? "3px" : "calc(50% + 3px)";
+    modeToggleBtn.setAttribute("aria-label", "Mode de mesure : " + MODES[mode].label + " (toucher pour changer)");
+  }
+  modeToggleBtn.addEventListener("click", () => {
+    if(active) return;
+    mode = mode === "auto" ? "avion" : "auto";
+    try{ localStorage.setItem(MODE_STORE, mode); }catch(e){}
+    updateModeUI();
+  });
+  updateModeUI();
+
   const MIN_SAMPLES= 4;  // nb mini de relevés dans le segment pour tenter une régression
   const SE_MAX_PCT = 4;  // on n'affiche la pente que si son incertitude est ≤ ±4 %
-  const STEP_MIN= 5;     // pas mini (m) entre deux fixes retenus (repli, si vitesse absente)
-  const SPEED_MIN=0.6;   // vitesse GPS mini (m/s ≈ 2 km/h) : capte la marche ; sous ce seuil = à l'arrêt
   const EMA     = 0.35;  // lissage léger de l'altitude
   const AVG_WINDOW_MS = 120000; // fenêtre de la moyenne d'altitude « point rouge » (2 min)
   const AVG_OUTLIER_K = 2;      // écarte les relevés à plus de K écarts-types de la moyenne brute
@@ -678,6 +741,7 @@
       avgWindowStart:null,  // horodatage de début de la fenêtre de 2 min en cours
       avgWindowSamples:[],  // relevés {t, alt, x} de la fenêtre en cours
       avgPoints:[],          // points rouges déjà calculés : [{x, y}]
+      cfg:null,          // configuration de distances (mode Auto/Avion), figée au démarrage
     };
   }
 
@@ -740,13 +804,16 @@
     }
     active = true;
     state = freshState();
+    state.cfg = MODES[mode];               // figé pour toute la durée de la course
     beginSeries();                         // nouvelle course → nouvelle série (récap conservé)
     if(notifySection) notifySection();
     toggle.dataset.on = "true";
     toggle.setAttribute("aria-pressed","true");
     toggleLabel.textContent = "Arrêter la mesure";
+    modeToggleBtn.disabled = true;
     zone.classList.add("open");
     resetDisplay();
+    distTargetEl.textContent = formatDist(state.cfg.TRIGGER);
     // Le canvas doit être dimensionné une fois visible
     requestAnimationFrame(() => { sizeCanvases(); draw(); });
     setStatus("Acquisition du signal GPS…");
@@ -764,6 +831,7 @@
     toggle.dataset.on = "false";
     toggle.setAttribute("aria-pressed","false");
     toggleLabel.textContent = "Mesurer la pente";
+    modeToggleBtn.disabled = false;
     zone.classList.remove("open");
     state = null;               // plus aucune mesure conservée
   }
@@ -811,7 +879,7 @@
     let moved = false;
 
     if(spd != null){
-      if(spd >= SPEED_MIN && state.lastT != null){
+      if(spd >= state.cfg.SPEED_MIN && state.lastT != null){
         const dt = (now - state.lastT) / 1000;          // secondes
         if(dt > 0 && dt < 10){ state.liveDist += spd * dt; moved = true; }
       }
@@ -820,7 +888,7 @@
       // Repli si l'iPhone ne fournit pas la vitesse : cumul des pas, avec un
       // seuil lié à la précision ; la référence n'avance qu'au vrai déplacement.
       const step = haversine(state.prev, cur);
-      const gate = Math.max(STEP_MIN, (c.accuracy || 0) * 0.6);
+      const gate = Math.max(state.cfg.STEP_MIN, (c.accuracy || 0) * 0.6);
       if(step >= gate){ state.liveDist += step; state.prev = cur; moved = true; }
     }
     state.lastT = now;
@@ -842,14 +910,14 @@
     // n'affiche RIEN tant que l'incertitude de la pente reste élevée. C'est ce
     // qui supprime les valeurs intermédiaires aberrantes (−80 %, etc.) : le
     // chiffre n'apparaît que lorsqu'il est réellement fiable, puis s'affine.
-    if(state.samples.length >= MIN_SAMPLES && state.liveDist >= SHOW_MIN_D){
+    if(state.samples.length >= MIN_SAMPLES && state.liveDist >= state.cfg.SHOW_MIN_D){
       const fit = segSlope(state.samples);
       if(fit && fit.se * 100 <= SE_MAX_PCT) state.liveSlope = fit.m * 100;
     }
 
     // Verrouillage tous les 100 m PARCOURUS : la valeur verrouillée est la
     // régression sur l'ensemble du segment (profite de toutes les mesures).
-    if(state.liveDist >= TRIGGER){
+    if(state.liveDist >= state.cfg.TRIGGER){
       const fit = segSlope(state.samples);
       const slope = fit ? fit.m * 100 : dz / state.liveDist * 100;
       const d0 = state.cum, a0 = state.anchor.alt;   // bornes de début de la section
@@ -925,15 +993,15 @@
     }
 
     dzEl.textContent = (dz>=0?"+":"") + dz.toFixed(1);
-    distEl.textContent = Math.round(state.liveDist);
-    fillEl.style.width = Math.min(100, state.liveDist/TRIGGER*100) + "%";
+    distEl.textContent = formatDist(state.liveDist);
+    fillEl.style.width = Math.min(100, state.liveDist/state.cfg.TRIGGER*100) + "%";
   }
 
   function resetDisplay(){
     numEl.textContent="—"; arrowEl.textContent="→"; arrowEl.style.color="var(--amber)";
     dirEl.textContent="recherche du signal…";
     badge.dataset.state="idle"; badge.textContent="En attente";
-    distEl.textContent="0"; fillEl.style.width="0%";
+    distEl.textContent="0 m"; fillEl.style.width="0%";
     altEl.textContent="—"; dzEl.textContent="—"; accEl.textContent="—";
   }
 
@@ -1079,7 +1147,7 @@
     zc.beginPath(); zc.moveTo(10,yL); zc.lineTo(w-10,yR); zc.stroke();
 
     // Portion réellement mesurée (au centre), tracée vive
-    const frac = Math.max(0.12, Math.min(1, state.liveDist/TRIGGER)); // 0..1
+    const frac = Math.max(0.12, Math.min(1, state.liveDist/state.cfg.TRIGGER)); // 0..1
     const halfSpan = (w-20)/2 * frac;
     const mx0=cx-halfSpan, mx1=cx+halfSpan;
     const my0=slopeToY(-s*frac), my1=slopeToY(s*frac);
@@ -1102,7 +1170,7 @@
     zc.font = "700 26px ui-monospace,monospace"; zc.textAlign="right";
     zc.fillText((s>=0?"+":"")+s.toFixed(1)+" %", w-14, 26);
     zc.fillStyle = css("--muted"); zc.font="11px ui-monospace,monospace";
-    zc.fillText(Math.round(state.liveDist)+" m mesurés · reste extrapolé", w-14, h-10);
+    zc.fillText(formatDist(state.liveDist)+" mesurés · reste extrapolé", w-14, h-10);
   }
 
   function drawArrow(ctx,x,y,ang,color){
@@ -1501,7 +1569,7 @@
       });
       return { pts, ranges,
         info: ordered.length + " section" + (ordered.length>1?"s":"") + " · distance totale " +
-        Math.round(totalDist) + " m · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
+        formatDist(totalDist) + " · dénivelé total " + (totalDz>=0?"+":"") + totalDz.toFixed(1) + " m" };
     }
 
     function drawSecGraph(){
@@ -1762,7 +1830,7 @@
       const metaEl = document.createElement("div"); metaEl.className = "sec-meta";
       const secDz = e.a1 - e.a0;
       metaEl.textContent = "dénivelé " + (secDz >= 0 ? "+" : "") + secDz.toFixed(1) + " m · "
-                         + Math.round(e.d1 - e.d0) + " m · " + fmtDate(e.t);
+                         + formatDist(e.d1 - e.d0) + " · " + fmtDate(e.t);
       body.appendChild(slopeEl); body.appendChild(metaEl);
       const check = document.createElement("span");
       check.className = "sec-check"; check.textContent = selected.indexOf(e) >= 0 ? "✓" : "";
@@ -1828,7 +1896,7 @@
         resultEl.innerHTML =
           '<div class="r-lbl">Pente moyenne — section ' + r.A.n + ' → section ' + r.B.n + '</div>' +
           '<div class="r-val">' + slopeTxt + '</div>' +
-          '<div class="r-sub">dénivelé ' + dzTxt + ' · distance ' + Math.round(r.dd) + ' m · ' + nSec + ' sections</div>';
+          '<div class="r-sub">dénivelé ' + dzTxt + ' · distance ' + formatDist(r.dd) + ' · ' + nSec + ' sections</div>';
         resultEl.hidden = false;
         hintEl.textContent = "";
       } else {
